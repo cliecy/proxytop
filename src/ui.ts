@@ -1,16 +1,177 @@
 import {
   BoxRenderable,
+  StyledText,
   TextRenderable,
+  bg,
+  bold,
   createCliRenderer,
+  dim,
+  fg,
   type CliRenderer,
   type KeyEvent,
+  type TextChunk,
 } from "@opentui/core"
-import type { AppSummary, ClassifiedFlow, NetworkSnapshot, PacketEvidence } from "./domain"
+import type { AppSummary, ClassifiedFlow, NetworkSnapshot, PacketEvidence, PathKind } from "./domain"
 import { knownProxyProcess } from "./classifier"
 import { fit, formatRate, pathLabel, sparkline } from "./format"
 import { FlowStore } from "./store"
 
 type View = "apps" | "topology" | "flows" | "diagnostics"
+
+const COLOR = {
+  background: "#071014",
+  panel: "#09171c",
+  detailPanel: "#151207",
+  text: "#dbeafe",
+  bright: "#f8fafc",
+  muted: "#78909c",
+  divider: "#42606b",
+  label: "#67e8f9",
+  labelBackground: "#0d2831",
+  header: "#f8fafc",
+  headerBackground: "#16404c",
+  alternateRow: "#0b1b21",
+  selectedRow: "#244b58",
+  cyan: "#38bdf8",
+  green: "#4ade80",
+  amber: "#fbbf24",
+  orange: "#fb923c",
+  red: "#fb7185",
+  purple: "#c084fc",
+  indigo: "#a5b4fc",
+  pink: "#f472b6",
+  lime: "#a3e635",
+} as const
+
+interface ChunkStyle {
+  bold?: boolean
+  dim?: boolean
+  background?: string
+}
+
+function styled(value: string, color: string = COLOR.text, style: ChunkStyle = {}): TextChunk {
+  let chunk = fg(color)(value)
+  if (style.bold) chunk = bold(chunk)
+  if (style.dim) chunk = dim(chunk)
+  if (style.background) chunk = bg(style.background)(chunk)
+  return chunk
+}
+
+function styledLines(lines: TextChunk[][]): StyledText {
+  const chunks: TextChunk[] = []
+  lines.forEach((line, index) => {
+    chunks.push(...line)
+    if (index < lines.length - 1) chunks.push(styled("\n"))
+  })
+  return new StyledText(chunks)
+}
+
+function paintRow(chunks: TextChunk[], background?: string): TextChunk[] {
+  return background ? chunks.map((chunk) => bg(background)(chunk)) : chunks
+}
+
+function rowBackground(index: number, selected = false): string | undefined {
+  if (selected) return COLOR.selectedRow
+  return index % 2 === 1 ? COLOR.alternateRow : undefined
+}
+
+function fitRight(value: string, width: number): string {
+  if (value.length > width) return fit(value, width)
+  return value.padStart(width)
+}
+
+function cell(
+  value: string,
+  width: number,
+  color: string = COLOR.text,
+  style: ChunkStyle & { align?: "left" | "right" } = {},
+): TextChunk {
+  const content = style.align === "right" ? fitRight(value, width) : fit(value, width)
+  return styled(content, color, style)
+}
+
+function columnDivider(): TextChunk {
+  return styled(" │ ", COLOR.divider, { dim: true })
+}
+
+function tableHeader(values: Array<[string, number, ("left" | "right")?]>): TextChunk[] {
+  const chunks: TextChunk[] = []
+  values.forEach(([value, width, align], index) => {
+    if (index > 0) chunks.push(columnDivider())
+    chunks.push(cell(value, width, COLOR.header, { bold: true, align }))
+  })
+  return paintRow(chunks, COLOR.headerBackground)
+}
+
+function tableRule(width: number): TextChunk[] {
+  return [styled("─".repeat(Math.max(1, width)), COLOR.divider, { dim: true })]
+}
+
+function labeledLine(label: string, value: string | TextChunk[], color: string = COLOR.text): TextChunk[] {
+  return [
+    styled(fit(label.toUpperCase(), 18), COLOR.label, { bold: true, background: COLOR.labelBackground }),
+    columnDivider(),
+    ...(typeof value === "string" ? [styled(value, color)] : value),
+  ]
+}
+
+function verdictColor(verdict: AppSummary["verdict"]): string {
+  const colors: Record<AppSummary["verdict"], string> = {
+    PROXIED: COLOR.green,
+    DIRECT: COLOR.red,
+    MIXED: COLOR.amber,
+    OVERLAY: COLOR.purple,
+    ENGINE: COLOR.cyan,
+    LOCAL: COLOR.lime,
+    UNKNOWN: COLOR.muted,
+  }
+  return colors[verdict]
+}
+
+function pathColor(path: PathKind): string {
+  const colors: Record<PathKind, string> = {
+    LOCAL_PROXY: COLOR.green,
+    TUNNELED: COLOR.purple,
+    DIRECT: COLOR.red,
+    PROXY_OUTBOUND: COLOR.cyan,
+    OVERLAY: COLOR.purple,
+    LAN: COLOR.lime,
+    BYPASSED: COLOR.orange,
+    UNKNOWN: COLOR.muted,
+  }
+  return colors[path]
+}
+
+function interfaceColor(interfaceName: string): string {
+  if (interfaceName.startsWith("utun")) return COLOR.purple
+  if (interfaceName === "lo0") return COLOR.lime
+  if (interfaceName === "-" || interfaceName === "unresolved") return COLOR.muted
+  return COLOR.amber
+}
+
+function topologyKindColor(kind: string): string {
+  if (kind.includes("PROXY")) return COLOR.green
+  if (kind.includes("VPN") || kind === "TUNNEL") return COLOR.purple
+  if (kind === "ZEROTIER") return COLOR.indigo
+  if (kind === "PHYSICAL") return COLOR.amber
+  return COLOR.cyan
+}
+
+function stateColor(state: string): string {
+  if (/inactive|disconnected|disabled|offline|error/i.test(state)) return COLOR.red
+  if (/active|connected|enabled|listening|online|ok/i.test(state)) return COLOR.green
+  return COLOR.amber
+}
+
+function targetColor(target: string): string {
+  if (target === "-" || /unknown|none/i.test(target)) return COLOR.muted
+  if (/hidden/i.test(target)) return COLOR.amber
+  return COLOR.green
+}
+
+function geoColor(status: string): string {
+  return /^ready\b/i.test(status) ? COLOR.green : COLOR.amber
+}
 
 interface UiState {
   nettop: string
@@ -136,7 +297,7 @@ export class Dashboard {
       screenMode: "alternate-screen",
       consoleMode: "disabled",
       targetFps: 30,
-      backgroundColor: "#071014",
+      backgroundColor: COLOR.background,
     })
     const renderer = this.renderer
     try {
@@ -160,7 +321,7 @@ export class Dashboard {
       width: "100%",
       height: "100%",
       flexDirection: "column",
-      backgroundColor: "#071014",
+      backgroundColor: COLOR.background,
     })
     const statusBox = new BoxRenderable(renderer, {
       width: "100%",
@@ -170,9 +331,10 @@ export class Dashboard {
       borderColor: "#2dd4bf",
       title: " proxytop / application proxy locator ",
       titleColor: "#5eead4",
+      backgroundColor: COLOR.panel,
       paddingX: 1,
     })
-    this.statusText = new TextRenderable(renderer, { width: "100%", height: "100%", fg: "#d5f5ef" })
+    this.statusText = new TextRenderable(renderer, { width: "100%", height: "100%", fg: COLOR.text, wrapMode: "none" })
     statusBox.add(this.statusText)
 
     this.contentBox = new BoxRenderable(renderer, {
@@ -182,9 +344,10 @@ export class Dashboard {
       borderStyle: "rounded",
       borderColor: "#38bdf8",
       titleColor: "#7dd3fc",
+      backgroundColor: COLOR.background,
       paddingX: 1,
     })
-    this.contentText = new TextRenderable(renderer, { width: "100%", height: "100%", fg: "#dbeafe" })
+    this.contentText = new TextRenderable(renderer, { width: "100%", height: "100%", fg: COLOR.text, wrapMode: "none" })
     this.contentBox.add(this.contentText)
 
     const detailBox = new BoxRenderable(renderer, {
@@ -195,9 +358,10 @@ export class Dashboard {
       borderColor: "#f59e0b",
       title: " explanation / evidence ",
       titleColor: "#fbbf24",
+      backgroundColor: COLOR.detailPanel,
       paddingX: 1,
     })
-    this.detailText = new TextRenderable(renderer, { width: "100%", height: "100%", fg: "#fef3c7" })
+    this.detailText = new TextRenderable(renderer, { width: "100%", height: "100%", fg: COLOR.text, wrapMode: "none" })
     detailBox.add(this.detailText)
     root.add(statusBox)
     root.add(this.contentBox)
@@ -277,14 +441,38 @@ export class Dashboard {
       ? `${this.state.pktap}(${this.state.packetCount},${this.state.lastPacket})`
       : this.state.pktap
     const statusWidth = Math.max(20, this.renderer.width - 4)
-    this.statusText.content = [
-      `System proxy  ${proxyText(snapshot)}`,
-      `VPN stack     ${vpnSummary}  | other utun=${otherTunnels.length} (${attributedTunnels} named)  | ZeroTier=${zeroTier.length}`,
-      `Default path  ${snapshot.defaultInterface || "unknown"}  | DNS=${[...new Set(snapshot.dnsResolvers.map((item) => item.interfaceName).filter(Boolean))].join(",") || "unknown"}`,
-      `WAN observed  ↓ ${formatRate(totals.rateIn)} ${sparkline(history.inbound, chartWidth)}  ↑ ${formatRate(totals.rateOut)} ${sparkline(history.outbound, chartWidth)}`,
-      `Focus         ${focusText}`,
-      `Collectors    nettop=${this.state.nettop} pktap=${packetStatus} clash=${this.state.clash} geo=${this.geoStatus} ${this.state.paused ? "PAUSED" : "LIVE"}`,
-    ].map((line) => fit(line, statusWidth).trimEnd()).join("\n")
+    const collectorChunks = this.renderer.width < 120
+      ? [
+          styled("net=", COLOR.muted), cell(this.state.nettop, 7, COLOR.cyan, { bold: true }),
+          styled("  pkt=", COLOR.muted), cell(packetStatus, 4, COLOR.purple),
+          styled("  clash=", COLOR.muted), cell(this.state.clash, 6, COLOR.amber),
+          styled("  geo=", COLOR.muted), cell(this.geoStatus, 4, geoColor(this.geoStatus)),
+          styled(`  ${this.state.paused ? "PAUSED" : "LIVE"}`, this.state.paused ? COLOR.amber : COLOR.green, { bold: true }),
+        ]
+      : [
+          styled("nettop=", COLOR.muted), styled(this.state.nettop, COLOR.cyan, { bold: true }),
+          styled("  pktap=", COLOR.muted), styled(packetStatus, COLOR.purple),
+          styled("  clash=", COLOR.muted), styled(this.state.clash, COLOR.amber),
+          styled("  geo=", COLOR.muted), styled(this.geoStatus, geoColor(this.geoStatus)),
+          styled(`  ${this.state.paused ? "PAUSED" : "LIVE"}`, this.state.paused ? COLOR.amber : COLOR.green, { bold: true }),
+        ]
+    const dnsInterfaces = [...new Set(snapshot.dnsResolvers.map((item) => item.interfaceName).filter(Boolean))].join(",") || "unknown"
+    const statusValueWidth = Math.max(1, statusWidth - 21)
+    this.statusText.content = styledLines([
+      labeledLine("System proxy", fit(proxyText(snapshot), statusValueWidth).trimEnd(), proxyText(snapshot) === "disabled" ? COLOR.muted : COLOR.green),
+      labeledLine("VPN stack", fit(`${vpnSummary}  |  other utun=${otherTunnels.length} (${attributedTunnels} named)  |  ZeroTier=${zeroTier.length}`, statusValueWidth).trimEnd(), vpnSummary === "none" ? COLOR.muted : COLOR.purple),
+      labeledLine("Default path", fit(`${snapshot.defaultInterface || "unknown"}  |  DNS=${dnsInterfaces}`, statusValueWidth).trimEnd(), interfaceColor(snapshot.defaultInterface || "unresolved")),
+      labeledLine("WAN observed", [
+        styled("↓ ", COLOR.cyan, { bold: true }),
+        styled(formatRate(totals.rateIn), COLOR.cyan),
+        styled(` ${sparkline(history.inbound, chartWidth)}  `, COLOR.muted, { dim: true }),
+        styled("↑ ", COLOR.pink, { bold: true }),
+        styled(formatRate(totals.rateOut), COLOR.pink),
+        styled(` ${sparkline(history.outbound, chartWidth)}`, COLOR.muted, { dim: true }),
+      ]),
+      labeledLine("Focus", fit(focusText, statusValueWidth).trimEnd(), focus ? verdictColor(focus.verdict) : COLOR.muted),
+      labeledLine("Collectors", collectorChunks),
+    ])
 
     if (this.state.view === "apps") this.renderApps(apps)
     else if (this.state.view === "topology") this.renderTopology(snapshot)
@@ -302,58 +490,98 @@ export class Dashboard {
     if (!this.renderer || !this.contentBox || !this.contentText || !this.detailText) return
     this.contentBox.title = ` 1 Apps: is this application proxied? ${this.searchLabel()} `
     this.state.selected = Math.min(this.state.selected, Math.max(0, apps.length - 1))
-    const width = this.renderer.width
-    const rows = Math.max(3, this.renderer.height - 21)
+    const tableWidth = Math.max(20, this.renderer.width - 4)
+    const rows = Math.max(1, this.renderer.height - 22)
     const start = Math.max(0, Math.min(this.state.selected - rows + 1, Math.max(0, apps.length - rows)))
     const visibleApps = apps.slice(start, start + rows)
-    if (width < 140) {
-      const nameWidth = width < 95 ? 17 : 22
-      const viaWidth = Math.max(14, width - nameWidth - 33)
-      this.contentText.content = [
-        `${fit("APP", nameWidth)} ${fit("STATUS", 8)} ${fit("VIA / PORT", viaWidth)} ${fit("DOWN", 10)} ${fit("UP", 10)}`,
-        ...visibleApps.map((app, index) =>
-          `${start + index === this.state.selected ? ">" : " "}${fit(app.process, nameWidth - 1)} ${fit(verdictLabel(app), 8)} ${fit(appVia(app), viaWidth)} ${fit(formatRate(app.rateIn), 10)} ${fit(formatRate(app.rateOut), 10)}`,
-        ),
-      ].join("\n")
+    if (this.renderer.width < 140) {
+      const nameWidth = this.renderer.width < 95 ? 17 : 22
+      const viaWidth = Math.max(8, tableWidth - nameWidth - 8 - 10 - 10 - 12)
+      const lines = [
+        tableHeader([["APP", nameWidth], ["STATUS", 8], ["VIA / PORT", viaWidth], ["DOWN", 10, "right"], ["UP", 10, "right"]]),
+        tableRule(tableWidth),
+        ...visibleApps.map((app, index) => {
+          const selected = start + index === this.state.selected
+          return paintRow([
+            cell(`${selected ? "▸" : " "} ${fit(app.process, nameWidth - 2)}`, nameWidth, COLOR.bright, { bold: selected }),
+            columnDivider(),
+            cell(verdictLabel(app), 8, verdictColor(app.verdict), { bold: true }),
+            columnDivider(),
+            cell(appVia(app), viaWidth, verdictColor(app.verdict)),
+            columnDivider(),
+            cell(formatRate(app.rateIn), 10, COLOR.cyan, { align: "right" }),
+            columnDivider(),
+            cell(formatRate(app.rateOut), 10, COLOR.pink, { align: "right" }),
+          ], rowBackground(start + index, selected))
+        }),
+      ]
+      this.contentText.content = styledLines(lines)
     } else {
-      const viaWidth = Math.max(24, Math.floor(width * 0.25))
-      const regionWidth = Math.max(10, width - viaWidth - 91)
-      this.contentText.content = [
-        `${fit("APPLICATION", 22)} ${fit("VERDICT", 8)} ${fit("PROXY / TUNNEL PATH", viaWidth)} ${fit("PROTOCOL", 23)} ${fit("TARGET COUNTRY", regionWidth)} ${fit("DOWN", 10)} ${fit("UP", 10)} CONN`,
-        ...visibleApps.map((app, index) =>
-          `${start + index === this.state.selected ? ">" : " "}${fit(app.process, 21)} ${fit(verdictLabel(app), 8)} ${fit(appVia(app), viaWidth)} ${fit(appProtocol(app), 23)} ${fit(app.regions.join(",") || (app.verdict === "PROXIED" ? "hidden by proxy" : "unknown"), regionWidth)} ${fit(formatRate(app.rateIn), 10)} ${fit(formatRate(app.rateOut), 10)} ${String(app.connections).padStart(4)}`,
-        ),
-      ].join("\n")
+      const flexibleWidth = Math.max(30, tableWidth - 92)
+      const viaWidth = Math.floor(flexibleWidth * 0.62)
+      const regionWidth = flexibleWidth - viaWidth
+      const lines = [
+        tableHeader([["APPLICATION", 22], ["VERDICT", 8], ["PROXY / TUNNEL PATH", viaWidth], ["PROTOCOL", 17], ["TARGET COUNTRY", regionWidth], ["DOWN", 10, "right"], ["UP", 10, "right"], ["CONN", 4, "right"]]),
+        tableRule(tableWidth),
+        ...visibleApps.map((app, index) => {
+          const selected = start + index === this.state.selected
+          const target = app.regions.join(",") || (app.verdict === "PROXIED" ? "hidden by proxy" : "unknown")
+          return paintRow([
+            cell(`${selected ? "▸" : " "} ${fit(app.process, 20)}`, 22, COLOR.bright, { bold: selected }),
+            columnDivider(),
+            cell(verdictLabel(app), 8, verdictColor(app.verdict), { bold: true }),
+            columnDivider(),
+            cell(appVia(app), viaWidth, verdictColor(app.verdict)),
+            columnDivider(),
+            cell(appProtocol(app), 17, COLOR.indigo),
+            columnDivider(),
+            cell(target, regionWidth, targetColor(target)),
+            columnDivider(),
+            cell(formatRate(app.rateIn), 10, COLOR.cyan, { align: "right" }),
+            columnDivider(),
+            cell(formatRate(app.rateOut), 10, COLOR.pink, { align: "right" }),
+            columnDivider(),
+            cell(String(app.connections), 4, COLOR.muted, { align: "right" }),
+          ], rowBackground(start + index, selected))
+        }),
+      ]
+      this.contentText.content = styledLines(lines)
     }
     const selected = apps[this.state.selected]
-    this.detailText.content = selected ? this.appDetail(selected) : "No matching application. Press / to change the filter."
+    this.detailText.content = selected
+      ? this.appDetail(selected)
+      : styledLines([labeledLine("Application", "No matching application. Press / to change the filter.", COLOR.muted)])
   }
 
-  private appDetail(app: AppSummary): string {
+  private appDetail(app: AppSummary): StyledText {
     const hiddenDestination = app.proxyHops.length > 0 && app.destinations.length === 0
-    return [
-      `${app.process}  PIDs=${app.pids.join(",")}  verdict=${app.verdict}  confidence=${app.confidence}`,
-      `Observed path: ${app.paths.map(pathLabel).join(" + ")}  via=${appVia(app)}`,
-      `Proxy protocol/config: ${app.proxyProtocols.join(", ") || "none observed"}  transport=${app.transports.join(", ")}`,
-      `Controller chain/rule: ${app.proxyChains.join(" | ") || "not available"}  ${app.rules.join(" | ") || ""}`,
-      `Interfaces: ${app.interfaces.join(", ") || "unknown"}  tunnel owner=${app.tunnelOwners.join(", ") || "none/unknown"}`,
-      `Destinations: ${hiddenDestination ? "hidden behind local proxy" : app.destinations.join(", ") || "none"}`,
-      `Target/remote country: ${app.regions.join(", ") || (hiddenDestination || app.paths.includes("TUNNELED") ? "hidden by proxy/VPN; provider API required" : "unknown")}`,
-      `Keys: 1 Apps  2 Topology  3 Flows  4 Diagnostics  / search  j/k select  s sort(${this.state.sort})  p pause  q quit`,
-    ].join("\n")
+    const targetCountry = app.regions.join(", ") || (hiddenDestination || app.paths.includes("TUNNELED") ? "hidden by proxy/VPN; provider API required" : "unknown")
+    const keys = this.renderer && this.renderer.width < 100
+      ? "1-4 views  /=search  j/k=move  s=sort  p=pause  q=quit"
+      : `1 Apps  2 Topology  3 Flows  4 Diagnostics  / search  j/k select  s sort(${this.state.sort})  p pause  q quit`
+    return styledLines([
+      labeledLine("Application", [
+        styled(app.process, COLOR.bright, { bold: true }),
+        styled(`  PID=${app.pids.join(",")}  `, COLOR.muted),
+        styled(app.verdict, verdictColor(app.verdict), { bold: true }),
+        styled(`  confidence=${app.confidence}`, COLOR.muted),
+      ]),
+      labeledLine("Observed path", `${app.paths.map(pathLabel).join(" + ")}  |  via=${appVia(app)}`, verdictColor(app.verdict)),
+      labeledLine("Proxy / transport", `${app.proxyProtocols.join(", ") || "none observed"}  |  ${app.transports.join(", ")}`, COLOR.indigo),
+      labeledLine("Controller / rule", `${app.proxyChains.join(" | ") || "not available"}  ${app.rules.join(" | ") || ""}`, app.proxyChains.length ? COLOR.green : COLOR.muted),
+      labeledLine("Interfaces", `${app.interfaces.join(", ") || "unknown"}  |  tunnel=${app.tunnelOwners.join(", ") || "none/unknown"}`, interfaceColor(app.interfaces[0] || "unresolved")),
+      labeledLine("Destinations", hiddenDestination ? "hidden behind local proxy" : app.destinations.join(", ") || "none", hiddenDestination ? COLOR.amber : COLOR.text),
+      labeledLine("Target country", targetCountry, targetColor(targetCountry)),
+      labeledLine("Keys", keys, COLOR.muted),
+    ])
   }
 
   private renderTopology(snapshot: NetworkSnapshot): void {
     if (!this.renderer || !this.contentBox || !this.contentText || !this.detailText) return
     this.contentBox.title = " 2 Topology: every detected proxy, VPN, tunnel, and virtual network "
-    const compact = this.renderer.width < 110
-    const addressWidth = compact ? Math.max(16, this.renderer.width - 53) : 32
-    const lines = [compact
-      ? `${fit("KIND", 10)} ${fit("NAME / OWNER", 18)} ${fit("STATE", 8)} ${fit("DEVICE", 9)} ${fit("ADDRESS / ROLE", addressWidth)}`
-      : `${fit("KIND", 12)} ${fit("NAME / OWNER", 24)} ${fit("STATE", 11)} ${fit("DEVICE", 10)} ${fit("ENDPOINT / ADDRESS", 32)} ROLE`]
-    const topologyRow = (kind: string, owner: string, state: string, device: string, address: string, role: string): string => compact
-      ? `${fit(kind, 10)} ${fit(owner, 18)} ${fit(state, 8)} ${fit(device, 9)} ${fit(`${address} ${role}`.trim(), addressWidth)}`
-      : `${fit(kind, 12)} ${fit(owner, 24)} ${fit(state, 11)} ${fit(device, 10)} ${fit(address, 32)} ${role}`
+    const compact = this.renderer.width < 130
+    const tableWidth = Math.max(20, this.renderer.width - 4)
+    const topologyRows: Array<[string, string, string, string, string, string]> = []
     const proxy = snapshot.proxy
     const proxyRows = [
       proxy.httpEnabled && ["SYSTEM PROXY", "HTTP", "enabled", "-", `${proxy.httpHost}:${proxy.httpPort}`],
@@ -361,35 +589,72 @@ export class Dashboard {
       proxy.socksEnabled && ["SYSTEM PROXY", "SOCKS", "enabled", "-", `${proxy.socksHost}:${proxy.socksPort}`],
       proxy.pacEnabled && ["SYSTEM PROXY", "PAC/WPAD", "enabled", "-", "dynamic"],
     ].filter(Boolean) as string[][]
-    for (const row of proxyRows) lines.push(topologyRow(row[0] || "", row[1] || "", row[2] || "", row[3] || "", row[4] || "", "application opt-in"))
+    for (const row of proxyRows) topologyRows.push([row[0] || "", row[1] || "", row[2] || "", row[3] || "", row[4] || "", "application opt-in"])
     const configuredPorts = new Set([proxy.httpPort, proxy.httpsPort, proxy.socksPort].filter((port): port is number => Boolean(port)))
     for (const listener of snapshot.listeners.filter((item) => knownProxyProcess(item.process) && !configuredPorts.has(item.port))) {
-      lines.push(topologyRow("PROXY PORT", listener.process, "listening", "TCP", `${listener.host}:${listener.port}`, "protocol unknown"))
+      topologyRows.push(["PROXY PORT", listener.process, "listening", "TCP", `${listener.host}:${listener.port}`, "protocol unknown"])
     }
     for (const vpn of snapshot.vpnServices) {
-      lines.push(topologyRow("VPN SERVICE", vpn.name, vpn.state, vpn.interfaceName || "-", vpn.serverAddress || vpn.providerBundleId || "-", vpn.primary ? "PRIMARY" : "configured"))
+      topologyRows.push(["VPN SERVICE", vpn.name, vpn.state, vpn.interfaceName || "-", vpn.serverAddress || vpn.providerBundleId || "-", vpn.primary ? "PRIMARY" : "configured"])
     }
     for (const network of snapshot.overlayNetworks) {
-      lines.push(topologyRow("ZEROTIER", network.name, network.status, network.interfaceName, network.addresses.join(",") || network.id, network.routes.join(",")))
+      topologyRows.push(["ZEROTIER", network.name, network.status, network.interfaceName, network.addresses.join(",") || network.id, network.routes.join(",")])
     }
     for (const item of snapshot.interfaces.filter((entry) => ["physical", "vpn", "tunnel", "zerotier"].includes(entry.kind) && (entry.status === "active" || entry.kind !== "physical"))) {
       if (item.kind === "zerotier" && snapshot.overlayNetworks.some((network) => network.interfaceName === item.name)) continue
-      lines.push(topologyRow(item.kind.toUpperCase(), item.owner || "unattributed", item.status, item.name, item.addresses.join(",") || "-", [item.isDefault ? "DEFAULT" : "", item.carriesDns ? "DNS" : "", item.effectiveInterface ? `over ${item.effectiveInterface}` : ""].filter(Boolean).join(" ")))
+      topologyRows.push([item.kind.toUpperCase(), item.owner || "unattributed", item.status, item.name, item.addresses.join(",") || "-", [item.isDefault ? "DEFAULT" : "", item.carriesDns ? "DNS" : "", item.effectiveInterface ? `over ${item.effectiveInterface}` : ""].filter(Boolean).join(" ")])
     }
-    const rows = Math.max(4, this.renderer.height - 21)
-    const maxStart = Math.max(0, lines.length - rows)
+    const rows = Math.max(1, this.renderer.height - 22)
+    const maxStart = Math.max(0, topologyRows.length - rows)
     this.state.selected = Math.min(this.state.selected, maxStart)
-    this.contentText.content = lines.slice(this.state.selected, this.state.selected + rows).join("\n")
+    const visibleRows = topologyRows.slice(this.state.selected, this.state.selected + rows)
+    if (compact) {
+      const addressWidth = Math.max(8, tableWidth - 10 - 18 - 9 - 9 - 12)
+      this.contentText.content = styledLines([
+        tableHeader([["KIND", 10], ["NAME / OWNER", 18], ["STATE", 9], ["DEVICE", 9], ["ADDRESS / ROLE", addressWidth]]),
+        tableRule(tableWidth),
+        ...visibleRows.map(([kind, owner, state, device, address, role], index) => paintRow([
+          cell(kind, 10, topologyKindColor(kind), { bold: true }),
+          columnDivider(),
+          cell(owner, 18, owner === "unattributed" ? COLOR.muted : COLOR.bright),
+          columnDivider(),
+          cell(state, 9, stateColor(state), { bold: true }),
+          columnDivider(),
+          cell(device, 9, interfaceColor(device)),
+          columnDivider(),
+          cell(`${address} ${role}`.trim(), addressWidth, COLOR.indigo),
+        ], rowBackground(this.state.selected + index))),
+      ])
+    } else {
+      const roleWidth = Math.max(8, tableWidth - 104)
+      this.contentText.content = styledLines([
+        tableHeader([["KIND", 12], ["NAME / OWNER", 24], ["STATE", 11], ["DEVICE", 10], ["ENDPOINT / ADDRESS", 32], ["ROLE", roleWidth]]),
+        tableRule(tableWidth),
+        ...visibleRows.map(([kind, owner, state, device, address, role], index) => paintRow([
+          cell(kind, 12, topologyKindColor(kind), { bold: true }),
+          columnDivider(),
+          cell(owner, 24, owner === "unattributed" ? COLOR.muted : COLOR.bright),
+          columnDivider(),
+          cell(state, 11, stateColor(state), { bold: true }),
+          columnDivider(),
+          cell(device, 10, interfaceColor(device)),
+          columnDivider(),
+          cell(address, 32, COLOR.indigo),
+          columnDivider(),
+          cell(role, roleWidth, role ? COLOR.amber : COLOR.muted),
+        ], rowBackground(this.state.selected + index))),
+      ])
+    }
     const unknown = snapshot.interfaces.filter((item) => item.kind === "tunnel" && !item.owner)
-    this.detailText.content = [
-      `Detected ${snapshot.vpnServices.length} configured VPN service(s), ${snapshot.interfaces.filter((item) => item.kind === "vpn").length} attributed VPN interface(s), ${unknown.length} unattributed utun interface(s).`,
-      `System proxy means compatible applications may connect to its endpoint; it does not prove every application uses it.`,
-      `A VPN service -> utun mapping from scutil is high confidence. Bare utun names without a matching service remain unattributed.`,
-      `ZeroTier feth attribution uses the MacEthernetTapAgent interface number and is vendor-specific.`,
-      `Proxy-engine remote countries are visible in Apps as ENGINE rows, but cannot be reliably assigned back to one local-proxy application.`,
-      `Default route=${snapshot.defaultInterface || "unknown"}; DNS interfaces=${[...new Set(snapshot.dnsResolvers.map((item) => item.interfaceName).filter(Boolean))].join(",") || "unknown"}.`,
-      `Keys: j/k scroll  1 Apps  2 Topology  3 Flows  4 Diagnostics  q quit`,
-    ].join("\n")
+    this.detailText.content = styledLines([
+      labeledLine("Inventory", `VPN services=${snapshot.vpnServices.length}  |  attributed=${snapshot.interfaces.filter((item) => item.kind === "vpn").length}  |  unknown utun=${unknown.length}`, COLOR.purple),
+      labeledLine("System proxy", "Compatible applications may opt in; configuration alone does not prove usage.", COLOR.green),
+      labeledLine("VPN mapping", "scutil service → utun is high confidence; a bare utun remains unattributed.", COLOR.purple),
+      labeledLine("ZeroTier", "feth attribution uses the vendor-specific MacEthernetTapAgent interface number.", COLOR.indigo),
+      labeledLine("Proxy engines", "ENGINE destinations cannot always be joined back to one local-proxy application.", COLOR.cyan),
+      labeledLine("Routing", `default=${snapshot.defaultInterface || "unknown"}  |  DNS=${[...new Set(snapshot.dnsResolvers.map((item) => item.interfaceName).filter(Boolean))].join(",") || "unknown"}`, interfaceColor(snapshot.defaultInterface || "unresolved")),
+      labeledLine("Keys", this.renderer.width < 100 ? "j/k scroll  1-4 views  q quit" : "j/k scroll  1 Apps  2 Topology  3 Flows  4 Diagnostics  q quit", COLOR.muted),
+    ])
   }
 
   private renderFlows(): void {
@@ -401,37 +666,81 @@ export class Dashboard {
       this.state.sort,
     )
     this.state.selected = Math.min(this.state.selected, Math.max(0, flows.length - 1))
-    const rows = Math.max(3, this.renderer.height - 21)
+    const tableWidth = Math.max(20, this.renderer.width - 4)
+    const rows = Math.max(1, this.renderer.height - 22)
     const start = Math.max(0, Math.min(this.state.selected - rows + 1, Math.max(0, flows.length - rows)))
     const visibleFlows = flows.slice(start, start + rows)
-    if (this.renderer.width < 110) {
-      const remoteWidth = Math.max(14, this.renderer.width - 45)
-      this.contentText.content = [
-        `${fit("PROCESS", 17)} ${fit("PATH", 8)} ${fit("VIA", 8)} ${fit("REMOTE", remoteWidth)} ${fit("TARGET", 7)}`,
-        ...visibleFlows.map((flow, index) =>
-          `${start + index === this.state.selected ? ">" : " "}${fit(flow.process, 16)} ${fit(pathLabel(flow.path), 8)} ${fit(flow.interfaceName || "-", 8)} ${fit(flow.remote.raw, remoteWidth)} ${fit(this.store.regionForHost(flow.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(flow.path) ? "hidden" : "-"), 7)}`,
-        ),
-      ].join("\n")
+    if (this.renderer.width < 125) {
+      const remoteWidth = Math.max(8, tableWidth - 17 - 8 - 8 - 7 - 12)
+      const lines = [
+        tableHeader([["PROCESS", 17], ["PATH", 8], ["VIA", 8], ["REMOTE", remoteWidth], ["TARGET", 7]]),
+        tableRule(tableWidth),
+        ...visibleFlows.map((flow, index) => {
+          const selected = start + index === this.state.selected
+          const target = this.store.regionForHost(flow.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(flow.path) ? "hidden" : "-")
+          const interfaceName = flow.interfaceName || "-"
+          return paintRow([
+            cell(`${selected ? "▸" : " "} ${fit(flow.process, 15)}`, 17, COLOR.bright, { bold: selected }),
+            columnDivider(),
+            cell(pathLabel(flow.path), 8, pathColor(flow.path), { bold: true }),
+            columnDivider(),
+            cell(interfaceName, 8, interfaceColor(interfaceName)),
+            columnDivider(),
+            cell(flow.remote.raw, remoteWidth, COLOR.indigo),
+            columnDivider(),
+            cell(target, 7, targetColor(target)),
+          ], rowBackground(start + index, selected))
+        }),
+      ]
+      this.contentText.content = styledLines(lines)
     } else {
-      const remoteWidth = Math.max(16, this.renderer.width - 88)
-      this.contentText.content = [
-        `${fit("PROCESS", 20)} ${fit("PATH", 8)} ${fit("IFACE", 8)} ${fit("TRANSPORT", 9)} ${fit("REMOTE", remoteWidth)} ${fit("TARGET", 8)} ${fit("DOWN", 10)} ${fit("UP", 10)}`,
-        ...visibleFlows.map((flow, index) =>
-          `${start + index === this.state.selected ? ">" : " "}${fit(flow.process, 19)} ${fit(pathLabel(flow.path), 8)} ${fit(flow.interfaceName || "-", 8)} ${fit(`${flow.protocol.toUpperCase()}${flow.family}`, 9)} ${fit(flow.remote.raw, remoteWidth)} ${fit(this.store.regionForHost(flow.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(flow.path) ? "hidden" : "-"), 8)} ${fit(formatRate(flow.rateIn), 10)} ${fit(formatRate(flow.rateOut), 10)}`,
-        ),
-      ].join("\n")
+      const remoteWidth = Math.max(8, tableWidth - 94)
+      const lines = [
+        tableHeader([["PROCESS", 20], ["PATH", 8], ["IFACE", 8], ["TRANSPORT", 9], ["REMOTE", remoteWidth], ["TARGET", 8], ["DOWN", 10, "right"], ["UP", 10, "right"]]),
+        tableRule(tableWidth),
+        ...visibleFlows.map((flow, index) => {
+          const selected = start + index === this.state.selected
+          const target = this.store.regionForHost(flow.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(flow.path) ? "hidden" : "-")
+          const interfaceName = flow.interfaceName || "-"
+          return paintRow([
+            cell(`${selected ? "▸" : " "} ${fit(flow.process, 18)}`, 20, COLOR.bright, { bold: selected }),
+            columnDivider(),
+            cell(pathLabel(flow.path), 8, pathColor(flow.path), { bold: true }),
+            columnDivider(),
+            cell(interfaceName, 8, interfaceColor(interfaceName)),
+            columnDivider(),
+            cell(`${flow.protocol.toUpperCase()}${flow.family}`, 9, COLOR.indigo),
+            columnDivider(),
+            cell(flow.remote.raw, remoteWidth, COLOR.bright),
+            columnDivider(),
+            cell(target, 8, targetColor(target)),
+            columnDivider(),
+            cell(formatRate(flow.rateIn), 10, COLOR.cyan, { align: "right" }),
+            columnDivider(),
+            cell(formatRate(flow.rateOut), 10, COLOR.pink, { align: "right" }),
+          ], rowBackground(start + index, selected))
+        }),
+      ]
+      this.contentText.content = styledLines(lines)
     }
     const selected = flows[this.state.selected]
+    const selectedTarget = selected
+      ? this.store.regionForHost(selected.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(selected.path) ? "hidden by proxy/VPN" : "unknown")
+      : "unknown"
     this.detailText.content = selected
-      ? [
-          `${selected.process} pid=${selected.pid} ${selected.local.raw} -> ${selected.remote.raw}`,
-          `classification=${selected.path} confidence=${selected.confidence} interface=${selected.interfaceName || "unknown"}`,
-          `state=${selected.state || "-"} RTT=${selected.rttMs?.toFixed(1) || "-"}ms down=${formatRate(selected.rateIn)} up=${formatRate(selected.rateOut)}`,
-          `target/remote country=${this.store.regionForHost(selected.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(selected.path) ? "hidden by proxy/VPN" : "unknown")}`,
-          ...selected.evidence,
-          `Keys: / search  j/k select  s sort(${this.state.sort})  p pause  q quit`,
-        ].join("\n")
-      : "No matching flow."
+      ? styledLines([
+          labeledLine("Process", [styled(selected.process, COLOR.bright, { bold: true }), styled(`  PID=${selected.pid}`, COLOR.muted)]),
+          labeledLine("Endpoints", `${selected.local.raw}  →  ${selected.remote.raw}`, COLOR.indigo),
+          labeledLine("Classification", [
+            styled(`${selected.path}  |  confidence=${selected.confidence}  |  interface=${selected.interfaceName || "unknown"}`, pathColor(selected.path)),
+            styled("  |  country=", COLOR.muted),
+            styled(selectedTarget, targetColor(selectedTarget)),
+          ]),
+          labeledLine("Metrics", `state=${selected.state || "-"}  RTT=${selected.rttMs?.toFixed(1) || "-"}ms  ↓ ${formatRate(selected.rateIn)}  ↑ ${formatRate(selected.rateOut)}`, COLOR.cyan),
+          ...selected.evidence.slice(0, 3).map((evidence, index) => labeledLine(index === 0 ? "Evidence" : "", evidence, COLOR.amber)),
+          labeledLine("Keys", `/ search  j/k select  s sort(${this.state.sort})  p pause  q quit`, COLOR.muted),
+        ])
+      : styledLines([labeledLine("Flow", "No matching flow.", COLOR.muted)])
   }
 
   private renderDiagnostics(snapshot: NetworkSnapshot, apps: AppSummary[]): void {
@@ -440,29 +749,31 @@ export class Dashboard {
     const direct = apps.filter((app) => app.verdict === "DIRECT").map((app) => app.process)
     const mixed = apps.filter((app) => app.verdict === "MIXED").map((app) => app.process)
     const unknown = apps.filter((app) => app.verdict === "UNKNOWN").map((app) => app.process)
-    this.contentText.content = [
-      `Effective system proxy: ${proxyText(snapshot)}`,
-      `Proxy exclusions: ${snapshot.proxy.exceptions.join(", ") || "none"}`,
-      `Connected VPNs: ${snapshot.vpnServices.filter((item) => item.state === "Connected").map((item) => `${item.name}/${item.interfaceName}`).join(", ") || "none"}`,
-      `Unattributed tunnels: ${snapshot.interfaces.filter((item) => item.kind === "tunnel" && !item.owner).map((item) => item.name).join(", ") || "none"}`,
-      `ZeroTier networks: ${snapshot.overlayNetworks.map((item) => `${item.name}[${item.id}]/${item.interfaceName}/${item.status}`).join(", ") || "none"}`,
-      `DNS resolvers: ${snapshot.dnsResolvers.map((item) => `${item.servers.join("+")}@${item.interfaceName || "global"}${item.scoped ? " scoped" : ""}`).join(" | ") || "unknown"}`,
-      `DIRECT apps: ${direct.join(", ") || "none observed"}`,
-      `MIXED apps: ${mixed.join(", ") || "none observed"}`,
-      `UNKNOWN apps: ${unknown.join(", ") || "none observed"}`,
-      `Collector errors: ${snapshot.errors.join(" | ") || "none"}`,
-      `Geo status: ${this.geoStatus}`,
-      `Clash-compatible controller: ${this.store.getControllerSnapshot() ? `${this.store.getControllerSnapshot()?.url} (${this.store.getControllerSnapshot()?.connections.length} connections)` : "not connected"}`,
-      `Privileged pktap: ${this.state.pktap}, packets=${this.state.packetCount}, last=${this.state.lastPacket}`,
-    ].join("\n")
-    this.detailText.content = [
-      `PROXIED is based on an observed local proxy hop or an attributed active VPN interface. DIRECT means a physical-interface connection with no observed local proxy hop.`,
-      `MIXED means the same application currently has both proxied and direct flows and deserves inspection.`,
-      `For local HTTP/SOCKS proxies, the target and exact selected node are hidden from nettop unless a compatible controller provides the join.`,
-      `Exact Clash/Mihomo rules and node chains require its Controller API. Shadowrocket does not expose an equivalent stable public API.`,
-      `Offline IP country data labels server allocation and may not equal physical location.`,
-      `Keys: 1 Apps  2 Topology  3 Flows  4 Diagnostics  q quit`,
-    ].join("\n")
+    const controller = this.store.getControllerSnapshot()
+    this.contentText.content = styledLines([
+      labeledLine("System proxy", proxyText(snapshot), proxyText(snapshot) === "disabled" ? COLOR.muted : COLOR.green),
+      labeledLine("Proxy exclusions", snapshot.proxy.exceptions.join(", ") || "none", COLOR.muted),
+      labeledLine("Connected VPNs", snapshot.vpnServices.filter((item) => item.state === "Connected").map((item) => `${item.name}/${item.interfaceName}`).join(", ") || "none", COLOR.purple),
+      labeledLine("Unknown tunnels", snapshot.interfaces.filter((item) => item.kind === "tunnel" && !item.owner).map((item) => item.name).join(", ") || "none", COLOR.amber),
+      labeledLine("ZeroTier", snapshot.overlayNetworks.map((item) => `${item.name}[${item.id}]/${item.interfaceName}/${item.status}`).join(", ") || "none", COLOR.indigo),
+      labeledLine("DNS resolvers", snapshot.dnsResolvers.map((item) => `${item.servers.join("+")}@${item.interfaceName || "global"}${item.scoped ? " scoped" : ""}`).join(" | ") || "unknown", COLOR.cyan),
+      labeledLine("DIRECT apps", direct.join(", ") || "none observed", direct.length ? COLOR.red : COLOR.muted),
+      labeledLine("MIXED apps", mixed.join(", ") || "none observed", mixed.length ? COLOR.amber : COLOR.muted),
+      labeledLine("UNKNOWN apps", unknown.join(", ") || "none observed", COLOR.muted),
+      labeledLine("Collector errors", snapshot.errors.join(" | ") || "none", snapshot.errors.length ? COLOR.red : COLOR.green),
+      labeledLine("Geo database", this.geoStatus, geoColor(this.geoStatus)),
+      labeledLine("Clash controller", controller ? `${controller.url} (${controller.connections.length} connections)` : "not connected", controller ? COLOR.green : COLOR.muted),
+      labeledLine("Privileged pktap", `${this.state.pktap}  |  packets=${this.state.packetCount}  |  last=${this.state.lastPacket}`, this.state.packetCount ? COLOR.purple : COLOR.muted),
+    ])
+    this.detailText.content = styledLines([
+      labeledLine("PROXIED", "Observed local proxy hop or an attributed active VPN interface.", COLOR.green),
+      labeledLine("DIRECT", "Physical-interface connection with no observed local proxy hop.", COLOR.red),
+      labeledLine("MIXED", "The same application has both proxied and direct flows; inspect it.", COLOR.amber),
+      labeledLine("Local proxies", "Targets and selected nodes stay hidden unless a compatible controller provides the join.", COLOR.indigo),
+      labeledLine("Shadowrocket", "No equivalent stable public Controller API is available for exact rule/node chains.", COLOR.purple),
+      labeledLine("Geo data", "Country labels indicate IP allocation and may not equal physical location.", COLOR.cyan),
+      labeledLine("Keys", "1 Apps  2 Topology  3 Flows  4 Diagnostics  q quit", COLOR.muted),
+    ])
   }
 
   private searchLabel(): string {
