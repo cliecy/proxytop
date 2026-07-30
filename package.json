@@ -1,0 +1,61 @@
+{
+  "name": "proxytop",
+  "version": "0.1.0",
+  "description": "A btop-style macOS proxy, VPN, tunnel, and per-application network path inspector",
+  "type": "module",
+  "license": "MIT",
+  "author": "cliecy",
+  "homepage": "https://github.com/cliecy/proxytop#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cliecy/proxytop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cliecy/proxytop/issues"
+  },
+  "keywords": [
+    "bun",
+    "macos",
+    "network",
+    "proxy",
+    "vpn",
+    "tui",
+    "nettop",
+    "clash",
+    "shadowrocket",
+    "zerotier"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "packageManager": "bun@1.3.14",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "proxytop": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
+    "prepublishOnly": "bun test && bun run typecheck"
+  },
+  "dependencies": {
+    "@opentui/core": "0.4.5",
+    "ip-location-api": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "5.9.3"
+  }
+}
