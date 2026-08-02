@@ -1,4 +1,5 @@
 import type { PathKind } from "./domain"
+import type { Language } from "./config"
 
 export function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0 B"
@@ -18,18 +19,18 @@ export function fit(value: string, width: number): string {
   return value.padEnd(width)
 }
 
-export function pathLabel(path: PathKind): string {
-  const labels: Record<PathKind, string> = {
-    LOCAL_PROXY: "PROXY",
-    TUNNELED: "TUN",
-    DIRECT: "DIRECT",
-    PROXY_OUTBOUND: "OUTBOUND",
-    OVERLAY: "OVERLAY",
-    LAN: "LAN",
-    BYPASSED: "BYPASS",
-    UNKNOWN: "UNKNOWN",
+export function pathLabel(path: PathKind, language: Language = "en"): string {
+  const labels: Record<PathKind, [string, string]> = {
+    LOCAL_PROXY: ["PROXY", "代理"],
+    TUNNELED: ["TUN", "隧道"],
+    DIRECT: ["DIRECT", "直连"],
+    PROXY_OUTBOUND: ["OUTBOUND", "出站"],
+    OVERLAY: ["OVERLAY", "覆盖"],
+    LAN: ["LAN", "局域网"],
+    BYPASSED: ["BYPASS", "绕过"],
+    UNKNOWN: ["UNKNOWN", "未知"],
   }
-  return labels[path]
+  return labels[path][language === "zh" ? 1 : 0]
 }
 
 export function sparkline(values: number[], width: number): string {

@@ -118,7 +118,7 @@ export async function inspectApp(
     const hidden = app.proxyHops.length > 0 || app.paths.includes("TUNNELED")
     console.log(`${app.process} [${app.verdict}] confidence=${app.confidence}`)
     console.log(`  PIDs: ${app.pids.join(", ")}`)
-    console.log(`  Paths: ${app.paths.map(pathLabel).join(" + ")}`)
+    console.log(`  Paths: ${app.paths.map((path) => pathLabel(path)).join(" + ")}`)
     console.log(`  Proxy endpoint: ${app.proxyHops.join(", ") || "none observed"}`)
     console.log(`  Proxy configuration: ${app.proxyProtocols.join(", ") || "none observed"}`)
     console.log(`  Controller chain/rule: ${app.proxyChains.join(" | ") || "not available"} ${app.rules.join(" | ")}`)

@@ -67,6 +67,10 @@ function styledLines(lines: TextChunk[][]): StyledText {
   return new StyledText(chunks)
 }
 
+function text(language: Language, english: string, chinese: string): string {
+  return language === "zh" ? chinese : english
+}
+
 function paintRow(chunks: TextChunk[], background?: string): TextChunk[] {
   return background ? chunks.map((chunk) => bg(background)(chunk)) : chunks
 }
@@ -143,6 +147,31 @@ function pathColor(path: PathKind): string {
   return colors[path]
 }
 
+function topologyLabel(value: string, language: Language): string {
+  if (language === "en") return value
+  const labels: Record<string, string> = {
+    "SYSTEM PROXY": "系统代理",
+    "PROXY PORT": "代理端口",
+    "VPN SERVICE": "VPN 服务",
+    ZEROTIER: "ZeroTier",
+    PHYSICAL: "物理网卡",
+    VPN: "VPN",
+    TUNNEL: "隧道",
+    DEFAULT: "默认",
+    DNS: "DNS",
+    over: "经过",
+    PRIMARY: "主要",
+    configured: "已配置",
+    listening: "监听中",
+    active: "活动",
+    inactive: "未活动",
+    unknown: "未知",
+    Connected: "已连接",
+    Disconnected: "已断开",
+  }
+  return labels[value] || value
+}
+
 function interfaceColor(interfaceName: string): string {
   if (interfaceName.startsWith("utun")) return COLOR.purple
   if (interfaceName === "lo0") return COLOR.lime
@@ -200,17 +229,17 @@ function proxyText(snapshot: NetworkSnapshot): string {
   return values.join(" + ") || "disabled"
 }
 
-function verdictLabel(app: AppSummary): string {
-  const labels: Record<AppSummary["verdict"], string> = {
-    PROXIED: "PROXIED",
-    DIRECT: "DIRECT",
-    MIXED: "MIXED!",
-    OVERLAY: "OVERLAY",
-    ENGINE: "ENGINE",
-    LOCAL: "LOCAL",
-    UNKNOWN: "UNKNOWN",
+function verdictLabel(app: AppSummary, language: Language): string {
+  const labels: Record<AppSummary["verdict"], [string, string]> = {
+    PROXIED: ["PROXIED", "代理"],
+    DIRECT: ["DIRECT", "直连"],
+    MIXED: ["MIXED!", "混合"],
+    OVERLAY: ["OVERLAY", "覆盖"],
+    ENGINE: ["ENGINE", "引擎"],
+    LOCAL: ["LOCAL", "本地"],
+    UNKNOWN: ["UNKNOWN", "未知"],
   }
-  return labels[app.verdict]
+  return labels[app.verdict][language === "zh" ? 1 : 0]
 }
 
 function appVia(app: AppSummary): string {
@@ -451,15 +480,15 @@ export class Dashboard {
     const focus = this.state.view === "apps" ? apps[this.state.selected] : undefined
     const focusText = this.state.view === "apps"
       ? focus
-        ? `${focus.process}: ${focus.verdict} via ${appVia(focus)} region=${focus.regions.join(",") || (focus.verdict === "PROXIED" ? "hidden" : "unknown")}`
-        : "select an app"
+        ? `${focus.process}: ${verdictLabel(focus, this.state.language)} ${text(this.state.language, "via", "路径") } ${appVia(focus)} ${text(this.state.language, "region", "地区")}=${focus.regions.join(",") || (focus.verdict === "PROXIED" ? text(this.state.language, "hidden", "隐藏") : text(this.state.language, "unknown", "未知"))}`
+        : text(this.state.language, "select an app", "请选择一个应用")
       : this.state.view === "topology"
-        ? "complete local network topology"
+        ? text(this.state.language, "complete local network topology", "完整的本地网络拓扑")
         : this.state.view === "flows"
-          ? "raw connection evidence"
+          ? text(this.state.language, "raw connection evidence", "原始连接证据")
           : this.state.view === "diagnostics"
-            ? "configuration and uncertainty"
-            : "settings and terminology guide"
+            ? text(this.state.language, "configuration and uncertainty", "配置与不确定性")
+            : text(this.state.language, "settings and terminology guide", "设置与术语说明")
 
     const packetStatus = this.state.packetCount > 0
       ? `${this.state.pktap}(${this.state.packetCount},${this.state.lastPacket})`
@@ -467,26 +496,26 @@ export class Dashboard {
     const statusWidth = Math.max(20, this.renderer.width - 4)
     const collectorChunks = this.renderer.width < 120
       ? [
-          styled("net=", COLOR.muted), cell(this.state.nettop, 7, COLOR.cyan, { bold: true }),
-          styled("  pkt=", COLOR.muted), cell(packetStatus, 4, COLOR.purple),
-          styled("  clash=", COLOR.muted), cell(this.state.clash, 6, COLOR.amber),
-          styled("  geo=", COLOR.muted), cell(this.geoStatus, 4, geoColor(this.geoStatus)),
-          styled(`  ${this.state.paused ? "PAUSED" : "LIVE"}`, this.state.paused ? COLOR.amber : COLOR.green, { bold: true }),
+           styled(text(this.state.language, "net=", "网络="), COLOR.muted), cell(this.state.nettop, 7, COLOR.cyan, { bold: true }),
+           styled(text(this.state.language, "  pkt=", "  抓包="), COLOR.muted), cell(packetStatus, 4, COLOR.purple),
+           styled("  clash=", COLOR.muted), cell(this.state.clash, 6, COLOR.amber),
+           styled(text(this.state.language, "  geo=", "  地理="), COLOR.muted), cell(this.geoStatus, 4, geoColor(this.geoStatus)),
+           styled(`  ${this.state.paused ? text(this.state.language, "PAUSED", "暂停") : text(this.state.language, "LIVE", "实时")}`, this.state.paused ? COLOR.amber : COLOR.green, { bold: true }),
         ]
       : [
-          styled("nettop=", COLOR.muted), styled(this.state.nettop, COLOR.cyan, { bold: true }),
-          styled("  pktap=", COLOR.muted), styled(packetStatus, COLOR.purple),
-          styled("  clash=", COLOR.muted), styled(this.state.clash, COLOR.amber),
-          styled("  geo=", COLOR.muted), styled(this.geoStatus, geoColor(this.geoStatus)),
-          styled(`  ${this.state.paused ? "PAUSED" : "LIVE"}`, this.state.paused ? COLOR.amber : COLOR.green, { bold: true }),
+           styled("nettop=", COLOR.muted), styled(this.state.nettop, COLOR.cyan, { bold: true }),
+           styled(text(this.state.language, "  pktap=", "  抓包="), COLOR.muted), styled(packetStatus, COLOR.purple),
+           styled("  clash=", COLOR.muted), styled(this.state.clash, COLOR.amber),
+           styled(text(this.state.language, "  geo=", "  地理="), COLOR.muted), styled(this.geoStatus, geoColor(this.geoStatus)),
+           styled(`  ${this.state.paused ? text(this.state.language, "PAUSED", "暂停") : text(this.state.language, "LIVE", "实时")}`, this.state.paused ? COLOR.amber : COLOR.green, { bold: true }),
         ]
     const dnsInterfaces = [...new Set(snapshot.dnsResolvers.map((item) => item.interfaceName).filter(Boolean))].join(",") || "unknown"
     const statusValueWidth = Math.max(1, statusWidth - 21)
     this.statusText.content = styledLines([
-      labeledLine("System proxy", fit(proxyText(snapshot), statusValueWidth).trimEnd(), proxyText(snapshot) === "disabled" ? COLOR.muted : COLOR.green),
-      labeledLine("VPN stack", fit(`${vpnSummary}  |  other utun=${otherTunnels.length} (${attributedTunnels} named)  |  ZeroTier=${zeroTier.length}`, statusValueWidth).trimEnd(), vpnSummary === "none" ? COLOR.muted : COLOR.purple),
-      labeledLine("Default path", fit(`${snapshot.defaultInterface || "unknown"}  |  DNS=${dnsInterfaces}`, statusValueWidth).trimEnd(), interfaceColor(snapshot.defaultInterface || "unresolved")),
-      labeledLine("WAN observed", [
+      labeledLine(text(this.state.language, "System proxy", "系统代理"), fit(proxyText(snapshot), statusValueWidth).trimEnd(), proxyText(snapshot) === "disabled" ? COLOR.muted : COLOR.green),
+      labeledLine(text(this.state.language, "VPN stack", "VPN 栈"), fit(`${vpnSummary}  |  ${text(this.state.language, "other utun", "其他 utun")}=${otherTunnels.length} (${attributedTunnels} ${text(this.state.language, "named", "已命名")})  |  ZeroTier=${zeroTier.length}`, statusValueWidth).trimEnd(), vpnSummary === "none" ? COLOR.muted : COLOR.purple),
+      labeledLine(text(this.state.language, "Default path", "默认路径"), fit(`${snapshot.defaultInterface || text(this.state.language, "unknown", "未知")}  |  DNS=${dnsInterfaces}`, statusValueWidth).trimEnd(), interfaceColor(snapshot.defaultInterface || "unresolved")),
+      labeledLine(text(this.state.language, "WAN observed", "WAN 观测"), [
         styled("↓ ", COLOR.cyan, { bold: true }),
         styled(formatRate(totals.rateIn), COLOR.cyan),
         styled(` ${sparkline(history.inbound, chartWidth)}  `, COLOR.muted, { dim: true }),
@@ -494,9 +523,9 @@ export class Dashboard {
         styled(formatRate(totals.rateOut), COLOR.pink),
         styled(` ${sparkline(history.outbound, chartWidth)}`, COLOR.muted, { dim: true }),
       ]),
-      labeledLine("Focus", fit(focusText, statusValueWidth).trimEnd(), focus ? verdictColor(focus.verdict) : COLOR.muted),
-      labeledLine("Language", this.state.language === "zh" ? "中文  (l = English)" : "English  (l = 中文)", COLOR.green),
-      labeledLine("Collectors", collectorChunks),
+      labeledLine(text(this.state.language, "Focus", "当前焦点"), fit(focusText, statusValueWidth).trimEnd(), focus ? verdictColor(focus.verdict) : COLOR.muted),
+      labeledLine(text(this.state.language, "Language", "语言"), this.state.language === "zh" ? "中文  (l = English)" : "English  (l = 中文)", COLOR.green),
+      labeledLine(text(this.state.language, "Collectors", "采集器"), collectorChunks),
     ])
 
     if (this.state.view === "apps") this.renderApps(apps)
@@ -526,14 +555,14 @@ export class Dashboard {
       const nameWidth = this.renderer.width < 95 ? 17 : 22
       const viaWidth = Math.max(8, tableWidth - nameWidth - 8 - 10 - 10 - 12)
       const lines = [
-        tableHeader([["APP", nameWidth], ["STATUS", 8], ["VIA / PORT", viaWidth], ["DOWN", 10, "right"], ["UP", 10, "right"]]),
+         tableHeader([[text(this.state.language, "APP", "应用"), nameWidth], [text(this.state.language, "STATUS", "状态"), 8], [text(this.state.language, "VIA / PORT", "路径 / 端口"), viaWidth], [text(this.state.language, "DOWN", "下载"), 10, "right"], [text(this.state.language, "UP", "上传"), 10, "right"]]),
         tableRule(tableWidth),
         ...visibleApps.map((app, index) => {
           const selected = start + index === this.state.selected
           return paintRow([
             cell(`${selected ? "▸" : " "} ${fit(app.process, nameWidth - 2)}`, nameWidth, COLOR.bright, { bold: selected }),
             columnDivider(),
-            cell(verdictLabel(app), 8, verdictColor(app.verdict), { bold: true }),
+            cell(verdictLabel(app, this.state.language), 8, verdictColor(app.verdict), { bold: true }),
             columnDivider(),
             cell(appVia(app), viaWidth, verdictColor(app.verdict)),
             columnDivider(),
@@ -549,15 +578,15 @@ export class Dashboard {
       const viaWidth = Math.floor(flexibleWidth * 0.62)
       const regionWidth = flexibleWidth - viaWidth
       const lines = [
-        tableHeader([["APPLICATION", 22], ["VERDICT", 8], ["PROXY / TUNNEL PATH", viaWidth], ["PROTOCOL", 17], ["TARGET COUNTRY", regionWidth], ["DOWN", 10, "right"], ["UP", 10, "right"], ["CONN", 4, "right"]]),
+         tableHeader([[text(this.state.language, "APPLICATION", "应用程序"), 22], [text(this.state.language, "VERDICT", "结论"), 8], [text(this.state.language, "PROXY / TUNNEL PATH", "代理 / 隧道路径"), viaWidth], [text(this.state.language, "PROTOCOL", "协议"), 17], [text(this.state.language, "TARGET COUNTRY", "目标国家"), regionWidth], [text(this.state.language, "DOWN", "下载"), 10, "right"], [text(this.state.language, "UP", "上传"), 10, "right"], [text(this.state.language, "CONN", "连接"), 4, "right"]]),
         tableRule(tableWidth),
         ...visibleApps.map((app, index) => {
           const selected = start + index === this.state.selected
-          const target = app.regions.join(",") || (app.verdict === "PROXIED" ? "hidden by proxy" : "unknown")
+           const target = app.regions.join(",") || (app.verdict === "PROXIED" ? text(this.state.language, "hidden by proxy", "代理隐藏") : text(this.state.language, "unknown", "未知"))
           return paintRow([
             cell(`${selected ? "▸" : " "} ${fit(app.process, 20)}`, 22, COLOR.bright, { bold: selected }),
             columnDivider(),
-            cell(verdictLabel(app), 8, verdictColor(app.verdict), { bold: true }),
+            cell(verdictLabel(app, this.state.language), 8, verdictColor(app.verdict), { bold: true }),
             columnDivider(),
             cell(appVia(app), viaWidth, verdictColor(app.verdict)),
             columnDivider(),
@@ -578,29 +607,29 @@ export class Dashboard {
     const selected = apps[this.state.selected]
     this.detailText.content = selected
       ? this.appDetail(selected)
-      : styledLines([labeledLine("Application", "No matching application. Press / to change the filter.", COLOR.muted)])
+      : styledLines([labeledLine(text(this.state.language, "Application", "应用程序"), text(this.state.language, "No matching application. Press / to change the filter.", "没有匹配的应用。按 / 修改筛选条件。"), COLOR.muted)])
   }
 
   private appDetail(app: AppSummary): StyledText {
     const hiddenDestination = app.proxyHops.length > 0 && app.destinations.length === 0
-    const targetCountry = app.regions.join(", ") || (hiddenDestination || app.paths.includes("TUNNELED") ? "hidden by proxy/VPN; provider API required" : "unknown")
+    const targetCountry = app.regions.join(", ") || (hiddenDestination || app.paths.includes("TUNNELED") ? text(this.state.language, "hidden by proxy/VPN; provider API required", "已被代理/VPN 隐藏；需要服务商 API") : text(this.state.language, "unknown", "未知"))
     const keys = this.renderer && this.renderer.width < 100
-      ? "1-5 views  /=search  j/k=move  s=sort  p=pause  q=quit"
-      : `1 Apps  2 Topology  3 Flows  4 Diagnostics  5 Settings  / search  j/k select  s sort(${this.state.sort})  p pause  q quit`
+      ? text(this.state.language, "1-5 views  /=search  j/k=move  s=sort  p=pause  q=quit", "1-5 视图  /=搜索  j/k=移动  s=排序  p=暂停  q=退出")
+      : text(this.state.language, `1 Apps  2 Topology  3 Flows  4 Diagnostics  5 Settings  / search  j/k select  s sort(${this.state.sort})  p pause  q quit`, `1 应用  2 拓扑  3 连接  4 诊断  5 设置  / 搜索  j/k 选择  s 排序(${this.state.sort})  p 暂停  q 退出`)
     return styledLines([
-      labeledLine("Application", [
+      labeledLine(text(this.state.language, "Application", "应用程序"), [
         styled(app.process, COLOR.bright, { bold: true }),
         styled(`  PID=${app.pids.join(",")}  `, COLOR.muted),
-        styled(app.verdict, verdictColor(app.verdict), { bold: true }),
-        styled(`  confidence=${app.confidence}`, COLOR.muted),
+        styled(verdictLabel(app, this.state.language), verdictColor(app.verdict), { bold: true }),
+        styled(`  ${text(this.state.language, "confidence", "置信度")}=${app.confidence}`, COLOR.muted),
       ]),
-      labeledLine("Observed path", `${app.paths.map(pathLabel).join(" + ")}  |  via=${appVia(app)}`, verdictColor(app.verdict)),
-      labeledLine("Proxy / transport", `${app.proxyProtocols.join(", ") || "none observed"}  |  ${app.transports.join(", ")}`, COLOR.indigo),
-      labeledLine("Controller / rule", `${app.proxyChains.join(" | ") || "not available"}  ${app.rules.join(" | ") || ""}`, app.proxyChains.length ? COLOR.green : COLOR.muted),
-      labeledLine("Interfaces", `${app.interfaces.join(", ") || "unknown"}  |  tunnel=${app.tunnelOwners.join(", ") || "none/unknown"}`, interfaceColor(app.interfaces[0] || "unresolved")),
-      labeledLine("Destinations", hiddenDestination ? "hidden behind local proxy" : app.destinations.join(", ") || "none", hiddenDestination ? COLOR.amber : COLOR.text),
-      labeledLine("Target country", targetCountry, targetColor(targetCountry)),
-      labeledLine("Keys", keys, COLOR.muted),
+      labeledLine(text(this.state.language, "Observed path", "观测路径"), `${app.paths.map((path) => pathLabel(path, this.state.language)).join(" + ")}  |  ${text(this.state.language, "via", "路径")}=${appVia(app)}`, verdictColor(app.verdict)),
+      labeledLine(text(this.state.language, "Proxy / transport", "代理 / 传输"), `${app.proxyProtocols.join(", ") || text(this.state.language, "none observed", "未观测到")}  |  ${app.transports.join(", ")}`, COLOR.indigo),
+      labeledLine(text(this.state.language, "Controller / rule", "控制器 / 规则"), `${app.proxyChains.join(" | ") || text(this.state.language, "not available", "不可用")}  ${app.rules.join(" | ") || ""}`, app.proxyChains.length ? COLOR.green : COLOR.muted),
+      labeledLine(text(this.state.language, "Interfaces", "网络接口"), `${app.interfaces.join(", ") || text(this.state.language, "unknown", "未知")}  |  tunnel=${app.tunnelOwners.join(", ") || text(this.state.language, "none/unknown", "无/未知")}`, interfaceColor(app.interfaces[0] || "unresolved")),
+      labeledLine(text(this.state.language, "Destinations", "目标"), hiddenDestination ? text(this.state.language, "hidden behind local proxy", "被本地代理隐藏") : app.destinations.join(", ") || text(this.state.language, "none", "无"), hiddenDestination ? COLOR.amber : COLOR.text),
+      labeledLine(text(this.state.language, "Target country", "目标国家"), targetCountry, targetColor(targetCountry)),
+      labeledLine(text(this.state.language, "Keys", "快捷键"), keys, COLOR.muted),
     ])
   }
 
@@ -641,49 +670,49 @@ export class Dashboard {
     if (compact) {
       const addressWidth = Math.max(8, tableWidth - 10 - 18 - 9 - 9 - 12)
       this.contentText.content = styledLines([
-        tableHeader([["KIND", 10], ["NAME / OWNER", 18], ["STATE", 9], ["DEVICE", 9], ["ADDRESS / ROLE", addressWidth]]),
+         tableHeader([[text(this.state.language, "KIND", "类型"), 10], [text(this.state.language, "NAME / OWNER", "名称 / 所有者"), 18], [text(this.state.language, "STATE", "状态"), 9], [text(this.state.language, "DEVICE", "设备"), 9], [text(this.state.language, "ADDRESS / ROLE", "地址 / 角色"), addressWidth]]),
         tableRule(tableWidth),
         ...visibleRows.map(([kind, owner, state, device, address, role], index) => paintRow([
-          cell(kind, 10, topologyKindColor(kind), { bold: true }),
+           cell(topologyLabel(kind, this.state.language), 10, topologyKindColor(kind), { bold: true }),
           columnDivider(),
           cell(owner, 18, owner === "unattributed" ? COLOR.muted : COLOR.bright),
           columnDivider(),
-          cell(state, 9, stateColor(state), { bold: true }),
+           cell(topologyLabel(state, this.state.language), 9, stateColor(state), { bold: true }),
           columnDivider(),
           cell(device, 9, interfaceColor(device)),
           columnDivider(),
-          cell(`${address} ${role}`.trim(), addressWidth, COLOR.indigo),
+           cell(`${address} ${role.split(" ").map((part) => topologyLabel(part, this.state.language)).join(" ")}`.trim(), addressWidth, COLOR.indigo),
         ], rowBackground(this.state.selected + index))),
       ])
     } else {
       const roleWidth = Math.max(8, tableWidth - 104)
       this.contentText.content = styledLines([
-        tableHeader([["KIND", 12], ["NAME / OWNER", 24], ["STATE", 11], ["DEVICE", 10], ["ENDPOINT / ADDRESS", 32], ["ROLE", roleWidth]]),
+         tableHeader([[text(this.state.language, "KIND", "类型"), 12], [text(this.state.language, "NAME / OWNER", "名称 / 所有者"), 24], [text(this.state.language, "STATE", "状态"), 11], [text(this.state.language, "DEVICE", "设备"), 10], [text(this.state.language, "ENDPOINT / ADDRESS", "端点 / 地址"), 32], [text(this.state.language, "ROLE", "角色"), roleWidth]]),
         tableRule(tableWidth),
         ...visibleRows.map(([kind, owner, state, device, address, role], index) => paintRow([
-          cell(kind, 12, topologyKindColor(kind), { bold: true }),
+           cell(topologyLabel(kind, this.state.language), 12, topologyKindColor(kind), { bold: true }),
           columnDivider(),
           cell(owner, 24, owner === "unattributed" ? COLOR.muted : COLOR.bright),
           columnDivider(),
-          cell(state, 11, stateColor(state), { bold: true }),
+           cell(topologyLabel(state, this.state.language), 11, stateColor(state), { bold: true }),
           columnDivider(),
           cell(device, 10, interfaceColor(device)),
           columnDivider(),
           cell(address, 32, COLOR.indigo),
           columnDivider(),
-          cell(role, roleWidth, role ? COLOR.amber : COLOR.muted),
+           cell(role.split(" ").map((part) => topologyLabel(part, this.state.language)).join(" "), roleWidth, role ? COLOR.amber : COLOR.muted),
         ], rowBackground(this.state.selected + index))),
       ])
     }
     const unknown = snapshot.interfaces.filter((item) => item.kind === "tunnel" && !item.owner)
     this.detailText.content = styledLines([
-      labeledLine("Inventory", `VPN services=${snapshot.vpnServices.length}  |  attributed=${snapshot.interfaces.filter((item) => item.kind === "vpn").length}  |  unknown utun=${unknown.length}`, COLOR.purple),
-      labeledLine("System proxy", "Compatible applications may opt in; configuration alone does not prove usage.", COLOR.green),
-      labeledLine("VPN mapping", "scutil service → utun is high confidence; a bare utun remains unattributed.", COLOR.purple),
-      labeledLine("ZeroTier", "feth attribution uses the vendor-specific MacEthernetTapAgent interface number.", COLOR.indigo),
-      labeledLine("Proxy engines", "ENGINE destinations cannot always be joined back to one local-proxy application.", COLOR.cyan),
-      labeledLine("Routing", `default=${snapshot.defaultInterface || "unknown"}  |  DNS=${[...new Set(snapshot.dnsResolvers.map((item) => item.interfaceName).filter(Boolean))].join(",") || "unknown"}`, interfaceColor(snapshot.defaultInterface || "unresolved")),
-      labeledLine("Keys", this.renderer.width < 100 ? "j/k scroll  1-5 views  q quit" : "j/k scroll  1 Apps  2 Topology  3 Flows  4 Diagnostics  5 Settings  q quit", COLOR.muted),
+       labeledLine(text(this.state.language, "Inventory", "清单"), `${text(this.state.language, "VPN services", "VPN 服务")}=${snapshot.vpnServices.length}  |  ${text(this.state.language, "attributed", "已归属")}=${snapshot.interfaces.filter((item) => item.kind === "vpn").length}  |  ${text(this.state.language, "unknown utun", "未知 utun")}=${unknown.length}`, COLOR.purple),
+       labeledLine(text(this.state.language, "System proxy", "系统代理"), text(this.state.language, "Compatible applications may opt in; configuration alone does not prove usage.", "兼容的应用可以选择使用代理；仅有配置并不能证明实际使用。"), COLOR.green),
+       labeledLine(text(this.state.language, "VPN mapping", "VPN 映射"), text(this.state.language, "scutil service → utun is high confidence; a bare utun remains unattributed.", "scutil 服务到 utun 的映射置信度较高；没有归属信息的 utun 无法确定所有者。"), COLOR.purple),
+       labeledLine("ZeroTier", text(this.state.language, "feth attribution uses the vendor-specific MacEthernetTapAgent interface number.", "feth 归属使用厂商特定的 MacEthernetTapAgent 接口编号。"), COLOR.indigo),
+       labeledLine(text(this.state.language, "Proxy engines", "代理引擎"), text(this.state.language, "ENGINE destinations cannot always be joined back to one local-proxy application.", "ENGINE 目标不一定能关联回某一个使用本地代理的应用。"), COLOR.cyan),
+       labeledLine(text(this.state.language, "Routing", "路由"), `default=${snapshot.defaultInterface || text(this.state.language, "unknown", "未知")}  |  DNS=${[...new Set(snapshot.dnsResolvers.map((item) => item.interfaceName).filter(Boolean))].join(",") || text(this.state.language, "unknown", "未知")}`, interfaceColor(snapshot.defaultInterface || "unresolved")),
+       labeledLine(text(this.state.language, "Keys", "快捷键"), this.renderer.width < 100 ? text(this.state.language, "j/k scroll  1-5 views  q quit", "j/k 滚动  1-5 视图  q 退出") : text(this.state.language, "j/k scroll  1 Apps  2 Topology  3 Flows  4 Diagnostics  5 Settings  q quit", "j/k 滚动  1 应用  2 拓扑  3 连接  4 诊断  5 设置  q 退出"), COLOR.muted),
     ])
   }
 
@@ -705,16 +734,16 @@ export class Dashboard {
     if (this.renderer.width < 125) {
       const remoteWidth = Math.max(8, tableWidth - 17 - 8 - 8 - 7 - 12)
       const lines = [
-        tableHeader([["PROCESS", 17], ["PATH", 8], ["VIA", 8], ["REMOTE", remoteWidth], ["TARGET", 7]]),
+         tableHeader([[text(this.state.language, "PROCESS", "进程"), 17], [text(this.state.language, "PATH", "路径"), 8], [text(this.state.language, "VIA", "接口"), 8], [text(this.state.language, "REMOTE", "远端"), remoteWidth], [text(this.state.language, "TARGET", "目标"), 7]]),
         tableRule(tableWidth),
         ...visibleFlows.map((flow, index) => {
           const selected = start + index === this.state.selected
-          const target = this.store.regionForHost(flow.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(flow.path) ? "hidden" : "-")
+           const target = this.store.regionForHost(flow.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(flow.path) ? text(this.state.language, "hidden", "隐藏") : "-")
           const interfaceName = flow.interfaceName || "-"
           return paintRow([
             cell(`${selected ? "▸" : " "} ${fit(flow.process, 15)}`, 17, COLOR.bright, { bold: selected }),
             columnDivider(),
-            cell(pathLabel(flow.path), 8, pathColor(flow.path), { bold: true }),
+            cell(pathLabel(flow.path, this.state.language), 8, pathColor(flow.path), { bold: true }),
             columnDivider(),
             cell(interfaceName, 8, interfaceColor(interfaceName)),
             columnDivider(),
@@ -728,16 +757,16 @@ export class Dashboard {
     } else {
       const remoteWidth = Math.max(8, tableWidth - 94)
       const lines = [
-        tableHeader([["PROCESS", 20], ["PATH", 8], ["IFACE", 8], ["TRANSPORT", 9], ["REMOTE", remoteWidth], ["TARGET", 8], ["DOWN", 10, "right"], ["UP", 10, "right"]]),
+         tableHeader([[text(this.state.language, "PROCESS", "进程"), 20], [text(this.state.language, "PATH", "路径"), 8], [text(this.state.language, "IFACE", "接口"), 8], [text(this.state.language, "TRANSPORT", "传输"), 9], [text(this.state.language, "REMOTE", "远端"), remoteWidth], [text(this.state.language, "TARGET", "目标"), 8], [text(this.state.language, "DOWN", "下载"), 10, "right"], [text(this.state.language, "UP", "上传"), 10, "right"]]),
         tableRule(tableWidth),
         ...visibleFlows.map((flow, index) => {
           const selected = start + index === this.state.selected
-          const target = this.store.regionForHost(flow.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(flow.path) ? "hidden" : "-")
+           const target = this.store.regionForHost(flow.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(flow.path) ? text(this.state.language, "hidden", "隐藏") : "-")
           const interfaceName = flow.interfaceName || "-"
           return paintRow([
             cell(`${selected ? "▸" : " "} ${fit(flow.process, 18)}`, 20, COLOR.bright, { bold: selected }),
             columnDivider(),
-            cell(pathLabel(flow.path), 8, pathColor(flow.path), { bold: true }),
+            cell(pathLabel(flow.path, this.state.language), 8, pathColor(flow.path), { bold: true }),
             columnDivider(),
             cell(interfaceName, 8, interfaceColor(interfaceName)),
             columnDivider(),
@@ -757,22 +786,22 @@ export class Dashboard {
     }
     const selected = flows[this.state.selected]
     const selectedTarget = selected
-      ? this.store.regionForHost(selected.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(selected.path) ? "hidden by proxy/VPN" : "unknown")
-      : "unknown"
+      ? this.store.regionForHost(selected.remote.host) || (["LOCAL_PROXY", "TUNNELED"].includes(selected.path) ? text(this.state.language, "hidden by proxy/VPN", "被代理/VPN 隐藏") : text(this.state.language, "unknown", "未知"))
+      : text(this.state.language, "unknown", "未知")
     this.detailText.content = selected
       ? styledLines([
-          labeledLine("Process", [styled(selected.process, COLOR.bright, { bold: true }), styled(`  PID=${selected.pid}`, COLOR.muted)]),
-          labeledLine("Endpoints", `${selected.local.raw}  →  ${selected.remote.raw}`, COLOR.indigo),
-          labeledLine("Classification", [
-            styled(`${selected.path}  |  confidence=${selected.confidence}  |  interface=${selected.interfaceName || "unknown"}`, pathColor(selected.path)),
-            styled("  |  country=", COLOR.muted),
+          labeledLine(text(this.state.language, "Process", "进程"), [styled(selected.process, COLOR.bright, { bold: true }), styled(`  PID=${selected.pid}`, COLOR.muted)]),
+          labeledLine(text(this.state.language, "Endpoints", "端点"), `${selected.local.raw}  →  ${selected.remote.raw}`, COLOR.indigo),
+          labeledLine(text(this.state.language, "Classification", "分类"), [
+            styled(`${pathLabel(selected.path, this.state.language)}  |  ${text(this.state.language, "confidence", "置信度")}=${selected.confidence}  |  ${text(this.state.language, "interface", "接口")}=${selected.interfaceName || text(this.state.language, "unknown", "未知")}`, pathColor(selected.path)),
+            styled(text(this.state.language, "  |  country=", "  |  国家="), COLOR.muted),
             styled(selectedTarget, targetColor(selectedTarget)),
           ]),
-          labeledLine("Metrics", `state=${selected.state || "-"}  RTT=${selected.rttMs?.toFixed(1) || "-"}ms  ↓ ${formatRate(selected.rateIn)}  ↑ ${formatRate(selected.rateOut)}`, COLOR.cyan),
-          ...selected.evidence.slice(0, 3).map((evidence, index) => labeledLine(index === 0 ? "Evidence" : "", evidence, COLOR.amber)),
-          labeledLine("Keys", `/ search  j/k select  s sort(${this.state.sort})  p pause  q quit`, COLOR.muted),
+          labeledLine(text(this.state.language, "Metrics", "指标"), `${text(this.state.language, "state", "状态")}=${selected.state || "-"}  RTT=${selected.rttMs?.toFixed(1) || "-"}ms  ↓ ${formatRate(selected.rateIn)}  ↑ ${formatRate(selected.rateOut)}`, COLOR.cyan),
+          ...selected.evidence.slice(0, 3).map((evidence, index) => labeledLine(index === 0 ? text(this.state.language, "Evidence", "证据") : "", evidence, COLOR.amber)),
+          labeledLine(text(this.state.language, "Keys", "快捷键"), text(this.state.language, `/ search  j/k select  s sort(${this.state.sort})  p pause  q quit`, `/ 搜索  j/k 选择  s 排序(${this.state.sort})  p 暂停  q 退出`), COLOR.muted),
         ])
-      : styledLines([labeledLine("Flow", "No matching flow.", COLOR.muted)])
+      : styledLines([labeledLine(text(this.state.language, "Flow", "连接"), text(this.state.language, "No matching flow.", "没有匹配的连接。"), COLOR.muted)])
   }
 
   private renderDiagnostics(snapshot: NetworkSnapshot, apps: AppSummary[]): void {
@@ -785,28 +814,28 @@ export class Dashboard {
     const unknown = apps.filter((app) => app.verdict === "UNKNOWN").map((app) => app.process)
     const controller = this.store.getControllerSnapshot()
     this.contentText.content = styledLines([
-      labeledLine("System proxy", proxyText(snapshot), proxyText(snapshot) === "disabled" ? COLOR.muted : COLOR.green),
-      labeledLine("Proxy exclusions", snapshot.proxy.exceptions.join(", ") || "none", COLOR.muted),
-      labeledLine("Connected VPNs", snapshot.vpnServices.filter((item) => item.state === "Connected").map((item) => `${item.name}/${item.interfaceName}`).join(", ") || "none", COLOR.purple),
-      labeledLine("Unknown tunnels", snapshot.interfaces.filter((item) => item.kind === "tunnel" && !item.owner).map((item) => item.name).join(", ") || "none", COLOR.amber),
-      labeledLine("ZeroTier", snapshot.overlayNetworks.map((item) => `${item.name}[${item.id}]/${item.interfaceName}/${item.status}`).join(", ") || "none", COLOR.indigo),
-      labeledLine("DNS resolvers", snapshot.dnsResolvers.map((item) => `${item.servers.join("+")}@${item.interfaceName || "global"}${item.scoped ? " scoped" : ""}`).join(" | ") || "unknown", COLOR.cyan),
-      labeledLine("DIRECT apps", direct.join(", ") || "none observed", direct.length ? COLOR.red : COLOR.muted),
-      labeledLine("MIXED apps", mixed.join(", ") || "none observed", mixed.length ? COLOR.amber : COLOR.muted),
-      labeledLine("UNKNOWN apps", unknown.join(", ") || "none observed", COLOR.muted),
-      labeledLine("Collector errors", snapshot.errors.join(" | ") || "none", snapshot.errors.length ? COLOR.red : COLOR.green),
-      labeledLine("Geo database", this.geoStatus, geoColor(this.geoStatus)),
-      labeledLine("Clash controller", controller ? `${controller.url} (${controller.connections.length} connections)` : "not connected", controller ? COLOR.green : COLOR.muted),
-      labeledLine("Privileged pktap", `${this.state.pktap}  |  packets=${this.state.packetCount}  |  last=${this.state.lastPacket}`, this.state.packetCount ? COLOR.purple : COLOR.muted),
+       labeledLine(text(this.state.language, "System proxy", "系统代理"), proxyText(snapshot), proxyText(snapshot) === "disabled" ? COLOR.muted : COLOR.green),
+       labeledLine(text(this.state.language, "Proxy exclusions", "代理例外"), snapshot.proxy.exceptions.join(", ") || text(this.state.language, "none", "无"), COLOR.muted),
+       labeledLine(text(this.state.language, "Connected VPNs", "已连接 VPN"), snapshot.vpnServices.filter((item) => item.state === "Connected").map((item) => `${item.name}/${item.interfaceName}`).join(", ") || text(this.state.language, "none", "无"), COLOR.purple),
+       labeledLine(text(this.state.language, "Unknown tunnels", "未知隧道"), snapshot.interfaces.filter((item) => item.kind === "tunnel" && !item.owner).map((item) => item.name).join(", ") || text(this.state.language, "none", "无"), COLOR.amber),
+       labeledLine("ZeroTier", snapshot.overlayNetworks.map((item) => `${item.name}[${item.id}]/${item.interfaceName}/${item.status}`).join(", ") || text(this.state.language, "none", "无"), COLOR.indigo),
+       labeledLine(text(this.state.language, "DNS resolvers", "DNS 解析器"), snapshot.dnsResolvers.map((item) => `${item.servers.join("+")}@${item.interfaceName || text(this.state.language, "global", "全局")}${item.scoped ? text(this.state.language, " scoped", " 作用域") : ""}`).join(" | ") || text(this.state.language, "unknown", "未知"), COLOR.cyan),
+       labeledLine(text(this.state.language, "DIRECT apps", "直连应用"), direct.join(", ") || text(this.state.language, "none observed", "未观测到"), direct.length ? COLOR.red : COLOR.muted),
+       labeledLine(text(this.state.language, "MIXED apps", "混合应用"), mixed.join(", ") || text(this.state.language, "none observed", "未观测到"), mixed.length ? COLOR.amber : COLOR.muted),
+       labeledLine(text(this.state.language, "UNKNOWN apps", "未知应用"), unknown.join(", ") || text(this.state.language, "none observed", "未观测到"), COLOR.muted),
+       labeledLine(text(this.state.language, "Collector errors", "采集器错误"), snapshot.errors.join(" | ") || text(this.state.language, "none", "无"), snapshot.errors.length ? COLOR.red : COLOR.green),
+       labeledLine(text(this.state.language, "Geo database", "地理数据库"), this.geoStatus, geoColor(this.geoStatus)),
+       labeledLine(text(this.state.language, "Clash controller", "Clash 控制器"), controller ? `${controller.url} (${controller.connections.length} ${text(this.state.language, "connections", "个连接")})` : text(this.state.language, "not connected", "未连接"), controller ? COLOR.green : COLOR.muted),
+       labeledLine(text(this.state.language, "Privileged pktap", "特权 pktap"), `${this.state.pktap}  |  ${text(this.state.language, "packets", "数据包")}=${this.state.packetCount}  |  ${text(this.state.language, "last", "最后")}=${this.state.lastPacket}`, this.state.packetCount ? COLOR.purple : COLOR.muted),
     ])
     this.detailText.content = styledLines([
-      labeledLine("PROXIED", "Observed local proxy hop or an attributed active VPN interface.", COLOR.green),
-      labeledLine("DIRECT", "Physical-interface connection with no observed local proxy hop.", COLOR.red),
-      labeledLine("MIXED", "The same application has both proxied and direct flows; inspect it.", COLOR.amber),
-      labeledLine("Local proxies", "Targets and selected nodes stay hidden unless a compatible controller provides the join.", COLOR.indigo),
-      labeledLine("Shadowrocket", "No equivalent stable public Controller API is available for exact rule/node chains.", COLOR.purple),
-      labeledLine("Geo data", "Country labels indicate IP allocation and may not equal physical location.", COLOR.cyan),
-      labeledLine("Keys", "1 Apps  2 Topology  3 Flows  4 Diagnostics  5 Settings  q quit", COLOR.muted),
+       labeledLine("PROXIED", text(this.state.language, "Observed local proxy hop or an attributed active VPN interface.", "观测到本地代理跳转或已归属的活动 VPN 接口。"), COLOR.green),
+       labeledLine("DIRECT", text(this.state.language, "Physical-interface connection with no observed local proxy hop.", "通过物理接口连接，未观测到本地代理跳转。"), COLOR.red),
+       labeledLine("MIXED", text(this.state.language, "The same application has both proxied and direct flows; inspect it.", "同一应用同时存在代理和直连流量；请进一步检查。"), COLOR.amber),
+       labeledLine(text(this.state.language, "Local proxies", "本地代理"), text(this.state.language, "Targets and selected nodes stay hidden unless a compatible controller provides the join.", "除非兼容的控制器提供关联信息，否则目标和节点会保持隐藏。"), COLOR.indigo),
+       labeledLine("Shadowrocket", text(this.state.language, "No equivalent stable public Controller API is available for exact rule/node chains.", "没有等价且稳定的公开控制器 API 可提供精确规则/节点链。"), COLOR.purple),
+       labeledLine(text(this.state.language, "Geo data", "地理数据"), text(this.state.language, "Country labels indicate IP allocation and may not equal physical location.", "国家标签表示 IP 分配地，不一定是实际物理位置。"), COLOR.cyan),
+       labeledLine(text(this.state.language, "Keys", "快捷键"), text(this.state.language, "1 Apps  2 Topology  3 Flows  4 Diagnostics  5 Settings  q quit", "1 应用  2 拓扑  3 连接  4 诊断  5 设置  q 退出"), COLOR.muted),
     ])
   }
 
