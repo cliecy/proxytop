@@ -1,6 +1,6 @@
 {
   "name": "proxytop",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "A btop-style macOS proxy, VPN, tunnel, and per-application network path inspector",
   "type": "module",
   "license": "MIT",
@@ -52,7 +52,8 @@
   },
   "dependencies": {
     "@opentui/core": "0.4.5",
-    "ip-location-api": "^5.0.2"
+    "ip-location-api": "^5.0.2",
+    "proxytop": "^1.0.3"
   },
   "devDependencies": {
     "@types/bun": "latest",

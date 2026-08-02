@@ -333,6 +333,7 @@ export class Dashboard {
       exitOnCtrlC: true,
       screenMode: "alternate-screen",
       consoleMode: "disabled",
+      useMouse: false,
       targetFps: 30,
       backgroundColor: COLOR.background,
     })
