@@ -14,7 +14,12 @@ export async function authorizePacketCapture(): Promise<string | undefined> {
   const user = userOutput.trim()
   if (identityCode !== 0 || user === "root" || !/^[a-z_][a-z0-9_-]*$/i.test(user)) return undefined
 
-  return user
+  const authorization = Bun.spawn(["/usr/bin/sudo", "-v"], {
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  })
+  return (await authorization.exited) === 0 ? user : undefined
 }
 
 export class PktapCollector {
@@ -92,7 +97,7 @@ export class PktapCollector {
       if (done) break
       if (!ready) process.stderr.write(value)
       text += decoder.decode(value, { stream: true })
-      if (!ready && text.includes("tcpdump: listening on")) {
+      if (!ready && /\blistening on\b/.test(text)) {
         ready = true
         resolveReady(true)
       }

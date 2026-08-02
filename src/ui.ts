@@ -13,10 +13,11 @@ import {
 } from "@opentui/core"
 import type { AppSummary, ClassifiedFlow, NetworkSnapshot, PacketEvidence, PathKind } from "./domain"
 import { knownProxyProcess } from "./classifier"
+import { saveConfig, type Language } from "./config"
 import { fit, formatRate, pathLabel, sparkline } from "./format"
 import { FlowStore } from "./store"
 
-type View = "apps" | "topology" | "flows" | "diagnostics"
+type View = "apps" | "topology" | "flows" | "diagnostics" | "settings"
 
 const COLOR = {
   background: "#071014",
@@ -185,6 +186,8 @@ interface UiState {
   view: View
   filter: string
   searching: boolean
+  language: Language
+  settingsStatus: string
 }
 
 function proxyText(snapshot: NetworkSnapshot): string {
@@ -267,12 +270,17 @@ export class Dashboard {
     view: "apps",
     filter: "",
     searching: false,
+    language: "en",
+    settingsStatus: "loaded",
   }
 
   constructor(
     private readonly store: FlowStore,
     private readonly geoStatus: string,
-  ) {}
+    initialLanguage: Language = "en",
+  ) {
+    this.state.language = initialLanguage
+  }
 
   setNettopStatus(status: string): void {
     this.state.nettop = status.slice(0, 48)
@@ -390,6 +398,20 @@ export class Dashboard {
     if (key.name === "2") this.switchView("topology")
     if (key.name === "3") this.switchView("flows")
     if (key.name === "4") this.switchView("diagnostics")
+    if (key.name === "5") this.switchView("settings")
+    if (this.state.view === "settings" && key.name === "l") {
+      this.state.language = this.state.language === "en" ? "zh" : "en"
+      this.state.settingsStatus = "saving"
+      void saveConfig({ language: this.state.language })
+        .then(() => {
+          this.state.settingsStatus = "saved"
+          this.render()
+        })
+        .catch((error) => {
+          this.state.settingsStatus = `save failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 48)
+          this.render()
+        })
+    }
     if (key.name === "/" || key.name === "slash" || key.sequence === "/") {
       this.state.searching = true
       this.state.filter = ""
@@ -435,7 +457,9 @@ export class Dashboard {
         ? "complete local network topology"
         : this.state.view === "flows"
           ? "raw connection evidence"
-          : "configuration and uncertainty"
+          : this.state.view === "diagnostics"
+            ? "configuration and uncertainty"
+            : "settings and terminology guide"
 
     const packetStatus = this.state.packetCount > 0
       ? `${this.state.pktap}(${this.state.packetCount},${this.state.lastPacket})`
@@ -477,7 +501,8 @@ export class Dashboard {
     if (this.state.view === "apps") this.renderApps(apps)
     else if (this.state.view === "topology") this.renderTopology(snapshot)
     else if (this.state.view === "flows") this.renderFlows()
-    else this.renderDiagnostics(snapshot, this.store.apps())
+    else if (this.state.view === "diagnostics") this.renderDiagnostics(snapshot, this.store.apps())
+    else this.renderSettings()
   }
 
   private filteredApps(): AppSummary[] {
@@ -557,8 +582,8 @@ export class Dashboard {
     const hiddenDestination = app.proxyHops.length > 0 && app.destinations.length === 0
     const targetCountry = app.regions.join(", ") || (hiddenDestination || app.paths.includes("TUNNELED") ? "hidden by proxy/VPN; provider API required" : "unknown")
     const keys = this.renderer && this.renderer.width < 100
-      ? "1-4 views  /=search  j/k=move  s=sort  p=pause  q=quit"
-      : `1 Apps  2 Topology  3 Flows  4 Diagnostics  / search  j/k select  s sort(${this.state.sort})  p pause  q quit`
+      ? "1-5 views  /=search  j/k=move  s=sort  p=pause  q=quit"
+      : `1 Apps  2 Topology  3 Flows  4 Diagnostics  5 Settings  / search  j/k select  s sort(${this.state.sort})  p pause  q quit`
     return styledLines([
       labeledLine("Application", [
         styled(app.process, COLOR.bright, { bold: true }),
@@ -653,7 +678,7 @@ export class Dashboard {
       labeledLine("ZeroTier", "feth attribution uses the vendor-specific MacEthernetTapAgent interface number.", COLOR.indigo),
       labeledLine("Proxy engines", "ENGINE destinations cannot always be joined back to one local-proxy application.", COLOR.cyan),
       labeledLine("Routing", `default=${snapshot.defaultInterface || "unknown"}  |  DNS=${[...new Set(snapshot.dnsResolvers.map((item) => item.interfaceName).filter(Boolean))].join(",") || "unknown"}`, interfaceColor(snapshot.defaultInterface || "unresolved")),
-      labeledLine("Keys", this.renderer.width < 100 ? "j/k scroll  1-4 views  q quit" : "j/k scroll  1 Apps  2 Topology  3 Flows  4 Diagnostics  q quit", COLOR.muted),
+      labeledLine("Keys", this.renderer.width < 100 ? "j/k scroll  1-5 views  q quit" : "j/k scroll  1 Apps  2 Topology  3 Flows  4 Diagnostics  5 Settings  q quit", COLOR.muted),
     ])
   }
 
@@ -772,7 +797,48 @@ export class Dashboard {
       labeledLine("Local proxies", "Targets and selected nodes stay hidden unless a compatible controller provides the join.", COLOR.indigo),
       labeledLine("Shadowrocket", "No equivalent stable public Controller API is available for exact rule/node chains.", COLOR.purple),
       labeledLine("Geo data", "Country labels indicate IP allocation and may not equal physical location.", COLOR.cyan),
-      labeledLine("Keys", "1 Apps  2 Topology  3 Flows  4 Diagnostics  q quit", COLOR.muted),
+      labeledLine("Keys", "1 Apps  2 Topology  3 Flows  4 Diagnostics  5 Settings  q quit", COLOR.muted),
+    ])
+  }
+
+  private renderSettings(): void {
+    if (!this.contentBox || !this.contentText || !this.detailText) return
+    const chinese = this.state.language === "zh"
+    this.contentBox.title = chinese ? " 5 设置 / README：术语说明 " : " 5 Settings / README: terminology guide "
+    const rows = chinese
+      ? [
+          ["PROXIED", "观察到应用连接了本地代理，或使用了已识别的 VPN/TUN 路径。", COLOR.green],
+          ["DIRECT", "应用通过物理网卡直连，未观察到本地代理跳转。", COLOR.red],
+          ["MIXED", "同一个应用同时出现代理连接和直连连接。", COLOR.amber],
+          ["OVERLAY", "流量经过 ZeroTier 等覆盖网络接口。", COLOR.purple],
+          ["ENGINE", "这是代理引擎本身的外层连接，不一定代表某个应用的最终连接。", COLOR.cyan],
+          ["UNKNOWN", "证据不足，程序不会猜测流量最终走向。", COLOR.muted],
+          ["PROXY / TUN", "PROXY 是本地代理端口；TUN 是 VPN 或隧道接口。", COLOR.indigo],
+          ["WAN observed", "只统计物理网卡上的直连和代理引擎外层流量，避免重复计算。", COLOR.cyan],
+          ["hidden", "本地代理或 TUN 隐藏了最终节点；需要兼容的 Clash/Mihomo API 才能显示。", COLOR.amber],
+          ["confidence", "HIGH/MEDIUM/LOW 表示证据强度，不是网络速度。", COLOR.purple],
+        ] as Array<[string, string, string]>
+      : [
+          ["PROXIED", "A local proxy hop or an attributed VPN/TUN path was observed.", COLOR.green],
+          ["DIRECT", "The application uses a physical interface without an observed local proxy hop.", COLOR.red],
+          ["MIXED", "The same application has both proxied and direct connections.", COLOR.amber],
+          ["OVERLAY", "Traffic uses an overlay interface such as ZeroTier.", COLOR.purple],
+          ["ENGINE", "This is an outer connection from the proxy engine itself.", COLOR.cyan],
+          ["UNKNOWN", "Evidence is insufficient; proxytop does not guess the route.", COLOR.muted],
+          ["PROXY / TUN", "PROXY means a local proxy port; TUN means a VPN or tunnel interface.", COLOR.indigo],
+          ["WAN observed", "Only physical-interface direct and proxy-engine traffic is counted to avoid duplicates.", COLOR.cyan],
+          ["hidden", "A local proxy or TUN hides the final node; a compatible Clash/Mihomo API is needed.", COLOR.amber],
+          ["confidence", "HIGH/MEDIUM/LOW describes evidence strength, not network speed.", COLOR.purple],
+        ] as Array<[string, string, string]>
+    this.contentText.content = styledLines([
+      labeledLine(chinese ? "语言" : "Language", `${chinese ? "中文" : "English"}  (${this.state.settingsStatus}; ${chinese ? "按 l 切换到 English" : "press l to switch to Chinese"})`, COLOR.green),
+      labeledLine(chinese ? "说明" : "Guide", chinese ? "这些术语描述观察到的网络证据，不等同于绝对保证。" : "These terms describe observed network evidence, not absolute guarantees.", COLOR.text),
+      ...rows.map(([term, explanation, color]) => labeledLine(term, explanation, color)),
+    ])
+    this.detailText.content = styledLines([
+      labeledLine(chinese ? "视图" : "Views", chinese ? "1 应用  2 拓扑  3 连接  4 诊断  5 设置" : "1 Apps  2 Topology  3 Flows  4 Diagnostics  5 Settings", COLOR.muted),
+      labeledLine(chinese ? "操作" : "Controls", chinese ? "l 切换语言  j/k 移动  / 搜索  s 排序  p 暂停  q 退出" : "l switch language  j/k move  / search  s sort  p pause  q quit", COLOR.muted),
+      labeledLine(chinese ? "重要提示" : "Important", chinese ? "DIRECT 不自动表示泄漏；UNKNOWN 表示当前证据不足。" : "DIRECT does not automatically mean a leak; UNKNOWN means evidence is incomplete.", COLOR.amber),
     ])
   }
 

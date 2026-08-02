@@ -4,6 +4,7 @@ import { NettopCollector } from "./collectors/nettop"
 import { ClashCollector, controllerOwnerForUrl, discoverClashController } from "./collectors/clash"
 import { authorizePacketCapture, PktapCollector } from "./collectors/pktap"
 import { collectNetworkSnapshot } from "./collectors/system"
+import { loadConfig } from "./config"
 import { checkDns, checkGit, checkSsh, checkUrl, inspectApp, runDoctor } from "./diagnostics"
 import { GeoResolver, geoStatus, updateGeoDatabase } from "./geo"
 import { FlowStore } from "./store"
@@ -79,11 +80,12 @@ async function main(): Promise<number> {
 
   const geo = new GeoResolver()
   await geo.initialize()
+  const config = await loadConfig()
   const store = new FlowStore()
   store.setRegionLookup(geo.lookup)
   const initialSnapshot = await collectNetworkSnapshot()
   store.setSnapshot(initialSnapshot)
-  const dashboard = new Dashboard(store, geo.status)
+  const dashboard = new Dashboard(store, geo.status, config.language)
   const nettop = new NettopCollector(
     (sample) => store.upsert(sample),
     (status) => dashboard.setNettopStatus(status),

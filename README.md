@@ -89,6 +89,8 @@ When available, the Apps view associates controller connections by source IP, po
 - `2`: complete proxy/VPN/tunnel topology
 - `3`: raw connection evidence
 - `4`: diagnostics and uncertainty
+- `5`: settings and terminology guide
+- `l` in Settings: switch between English and Chinese explanations
 - `/`: filter by application or endpoint
 - `j`, `k`, or arrow keys: select or scroll
 - `s`: sort by speed, process, or path
@@ -113,6 +115,10 @@ Application verdicts:
 - `OVERLAY`: the application is using an attributed overlay such as ZeroTier
 - `ENGINE`: the process is a proxy/VPN engine creating outer connections
 - `UNKNOWN`: evidence is insufficient for a reliable claim
+
+The Settings view contains a built-in README for users who are not familiar with networking terminology. It explains verdicts such as `PROXIED`, `DIRECT`, and `MIXED`, path labels such as `PROXY`, `TUN`, and `OVERLAY`, and why some destinations are shown as hidden or unknown. Press `l` there to switch the guide between English and Chinese.
+
+The selected language is saved persistently in `~/.config/proxytop/config.json` (or `$XDG_CONFIG_HOME/proxytop/config.json` when `XDG_CONFIG_HOME` is set). Missing or invalid settings default to English.
 
 `DIRECT` does not automatically mean a leak. Some applications and destinations intentionally bypass a proxy. For local HTTP/SOCKS proxies and packet tunnels, macOS does not expose a reliable application-to-final-node join. In those cases proxytop reports the proven local port or TUN owner and marks the final destination/country as hidden instead of guessing. Clash/Mihomo-compatible controller integration would be needed to show exact rule and node chains; Shadowrocket has no equivalent stable public API.
 
