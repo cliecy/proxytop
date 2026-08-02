@@ -336,7 +336,7 @@ export class Dashboard {
       screenMode: "alternate-screen",
       consoleMode: "disabled",
       enableMouseMovement: false,
-      useMouse: false,
+      useMouse: true,
       targetFps: 30,
       backgroundColor: COLOR.background,
     })
