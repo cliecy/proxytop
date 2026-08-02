@@ -16,6 +16,7 @@ import { knownProxyProcess } from "./classifier"
 import { saveConfig, type Language } from "./config"
 import { fit, formatRate, pathLabel, sparkline } from "./format"
 import { FlowStore } from "./store"
+import { isMouseReportSequence, MOUSE_TRACKING_OFF } from "./terminal-input"
 
 type View = "apps" | "topology" | "flows" | "diagnostics" | "settings"
 
@@ -329,15 +330,19 @@ export class Dashboard {
   }
 
   async run(onDestroy: () => void): Promise<void> {
+    process.stdout.write(MOUSE_TRACKING_OFF)
     this.renderer = await createCliRenderer({
       exitOnCtrlC: true,
       screenMode: "alternate-screen",
       consoleMode: "disabled",
+      enableMouseMovement: false,
       useMouse: false,
       targetFps: 30,
       backgroundColor: COLOR.background,
     })
     const renderer = this.renderer
+    const consumeMouseReport = (sequence: string): boolean => isMouseReportSequence(sequence)
+    renderer.prependInputHandler(consumeMouseReport)
     try {
       this.build(renderer)
       this.render()
@@ -349,7 +354,9 @@ export class Dashboard {
       await new Promise<void>((resolve) => renderer.once("destroy", resolve))
     } finally {
       if (this.timer) clearInterval(this.timer)
+      renderer.removeInputHandler(consumeMouseReport)
       if (!renderer.isDestroyed) renderer.destroy()
+      process.stdout.write(MOUSE_TRACKING_OFF)
       onDestroy()
     }
   }

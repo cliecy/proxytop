@@ -52,8 +52,7 @@
   },
   "dependencies": {
     "@opentui/core": "0.4.5",
-    "ip-location-api": "^5.0.2",
-    "proxytop": "^1.0.3"
+    "ip-location-api": "^5.0.2"
   },
   "devDependencies": {
     "@types/bun": "latest",
