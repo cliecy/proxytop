@@ -399,7 +399,7 @@ export class Dashboard {
     if (key.name === "3") this.switchView("flows")
     if (key.name === "4") this.switchView("diagnostics")
     if (key.name === "5") this.switchView("settings")
-    if (this.state.view === "settings" && key.name === "l") {
+    if (key.name === "l") {
       this.state.language = this.state.language === "en" ? "zh" : "en"
       this.state.settingsStatus = "saving"
       void saveConfig({ language: this.state.language })
@@ -495,6 +495,7 @@ export class Dashboard {
         styled(` ${sparkline(history.outbound, chartWidth)}`, COLOR.muted, { dim: true }),
       ]),
       labeledLine("Focus", fit(focusText, statusValueWidth).trimEnd(), focus ? verdictColor(focus.verdict) : COLOR.muted),
+      labeledLine("Language", this.state.language === "zh" ? "中文  (l = English)" : "English  (l = 中文)", COLOR.green),
       labeledLine("Collectors", collectorChunks),
     ])
 
@@ -513,7 +514,9 @@ export class Dashboard {
 
   private renderApps(apps: AppSummary[]): void {
     if (!this.renderer || !this.contentBox || !this.contentText || !this.detailText) return
-    this.contentBox.title = ` 1 Apps: is this application proxied? ${this.searchLabel()} `
+    this.contentBox.title = this.state.language === "zh"
+      ? ` 1 应用：这个应用是否经过代理？ ${this.searchLabel()} `
+      : ` 1 Apps: is this application proxied? ${this.searchLabel()} `
     this.state.selected = Math.min(this.state.selected, Math.max(0, apps.length - 1))
     const tableWidth = Math.max(20, this.renderer.width - 4)
     const rows = Math.max(1, this.renderer.height - 22)
@@ -603,7 +606,9 @@ export class Dashboard {
 
   private renderTopology(snapshot: NetworkSnapshot): void {
     if (!this.renderer || !this.contentBox || !this.contentText || !this.detailText) return
-    this.contentBox.title = " 2 Topology: every detected proxy, VPN, tunnel, and virtual network "
+    this.contentBox.title = this.state.language === "zh"
+      ? " 2 拓扑：检测到的代理、VPN、隧道和虚拟网络 "
+      : " 2 Topology: every detected proxy, VPN, tunnel, and virtual network "
     const compact = this.renderer.width < 130
     const tableWidth = Math.max(20, this.renderer.width - 4)
     const topologyRows: Array<[string, string, string, string, string, string]> = []
@@ -684,7 +689,9 @@ export class Dashboard {
 
   private renderFlows(): void {
     if (!this.renderer || !this.contentBox || !this.contentText || !this.detailText) return
-    this.contentBox.title = ` 3 Flows: raw per-connection evidence ${this.searchLabel()} `
+    this.contentBox.title = this.state.language === "zh"
+      ? ` 3 连接：每个连接的原始证据 ${this.searchLabel()} `
+      : ` 3 Flows: raw per-connection evidence ${this.searchLabel()} `
     const needle = this.state.filter.toLowerCase()
     const flows = sortFlows(
       this.store.list().filter((flow) => !needle || flow.process.toLowerCase().includes(needle) || flow.remote.raw.toLowerCase().includes(needle)),
@@ -770,7 +777,9 @@ export class Dashboard {
 
   private renderDiagnostics(snapshot: NetworkSnapshot, apps: AppSummary[]): void {
     if (!this.contentBox || !this.contentText || !this.detailText) return
-    this.contentBox.title = " 4 Diagnostics: configuration, DNS, and uncertainty "
+    this.contentBox.title = this.state.language === "zh"
+      ? " 4 诊断：配置、DNS 和不确定性 "
+      : " 4 Diagnostics: configuration, DNS, and uncertainty "
     const direct = apps.filter((app) => app.verdict === "DIRECT").map((app) => app.process)
     const mixed = apps.filter((app) => app.verdict === "MIXED").map((app) => app.process)
     const unknown = apps.filter((app) => app.verdict === "UNKNOWN").map((app) => app.process)
