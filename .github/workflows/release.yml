@@ -36,15 +36,7 @@ jobs:
 
   build:
     needs: verify
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-14
-            arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -52,10 +44,10 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
       - name: Build release asset
-        run: bash scripts/build-release.sh "${RELEASE_TAG#v}" "${{ matrix.arch }}" "$RUNNER_TEMP/proxytop-release"
+        run: bash scripts/build-release.sh "${RELEASE_TAG#v}" arm64 "$RUNNER_TEMP/proxytop-release"
       - uses: actions/upload-artifact@v4
         with:
-          name: proxytop-${{ matrix.arch }}
+          name: proxytop-arm64
           path: |
             ${{ runner.temp }}/proxytop-release/*.tar.gz
             ${{ runner.temp }}/proxytop-release/*.tar.gz.sha256

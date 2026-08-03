@@ -10,7 +10,7 @@ It correlates system HTTP/HTTPS/SOCKS settings, local listeners, configured VPN 
 
 ## Requirements
 
-- macOS, currently tested against macOS 27 on Apple Silicon
+- macOS on Apple Silicon (arm64), currently tested against macOS 27
 - Bun 1.3 or newer
 
 ## Install

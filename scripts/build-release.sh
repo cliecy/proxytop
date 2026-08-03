@@ -15,20 +15,13 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
   exit 2
 fi
 
-case "$requested_arch" in
-  arm64)
-    expected_machine="arm64"
-    asset_arch="arm"
-    ;;
-  x86_64)
-    expected_machine="x86_64"
-    asset_arch="intel"
-    ;;
-  *)
-    echo "unsupported release architecture: $requested_arch" >&2
-    exit 2
-    ;;
-esac
+if [[ "$requested_arch" != "arm64" ]]; then
+  echo "unsupported release architecture: $requested_arch (only arm64 is published)" >&2
+  exit 2
+fi
+
+expected_machine="arm64"
+asset_arch="arm"
 
 actual_machine="$(uname -m)"
 if [[ "$actual_machine" != "$expected_machine" ]]; then
