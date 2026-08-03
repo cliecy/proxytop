@@ -18,9 +18,11 @@ fi
 case "$requested_arch" in
   arm64)
     expected_machine="arm64"
+    asset_arch="arm"
     ;;
   x86_64)
     expected_machine="x86_64"
+    asset_arch="intel"
     ;;
   *)
     echo "unsupported release architecture: $requested_arch" >&2
@@ -41,7 +43,7 @@ if [[ "$package_version" != "$version" ]]; then
 fi
 
 mkdir -p "$output_dir"
-artifact="$output_dir/proxytop-${version}-darwin-${requested_arch}"
+artifact="$output_dir/proxytop-${version}-darwin-${asset_arch}"
 archive="${artifact}.tar.gz"
 
 bun build --compile --outfile="$artifact" src/index.ts
