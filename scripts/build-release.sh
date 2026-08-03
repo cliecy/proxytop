@@ -42,10 +42,12 @@ fi
 
 mkdir -p "$output_dir"
 artifact="$output_dir/proxytop-${version}-darwin-${requested_arch}"
+archive="${artifact}.tar.gz"
 
 bun build --compile --outfile="$artifact" src/index.ts
 test -x "$artifact"
-shasum -a 256 "$artifact" > "$artifact.sha256"
+tar -czf "$archive" -C "$output_dir" "$(basename "$artifact")"
+shasum -a 256 "$archive" > "$archive.sha256"
 
-echo "$artifact"
-echo "$artifact.sha256"
+echo "$archive"
+echo "$archive.sha256"

@@ -56,7 +56,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: proxytop-${{ matrix.arch }}
-          path: ${{ runner.temp }}/proxytop-release/
+          path: |
+            ${{ runner.temp }}/proxytop-release/*.tar.gz
+            ${{ runner.temp }}/proxytop-release/*.tar.gz.sha256
           if-no-files-found: error
 
   publish:
@@ -72,8 +74,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$RELEASE_TAG" release-assets/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "proxytop ${RELEASE_TAG#v}" \
-            --generate-notes \
-            --verify-tag
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "proxytop ${RELEASE_TAG#v}" \
+              --generate-notes \
+              --verify-tag
+          fi
