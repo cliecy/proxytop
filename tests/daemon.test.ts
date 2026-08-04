@@ -145,15 +145,19 @@ describe("daemon IPC", () => {
       regions: ["US"],
       rateIn: 10_000,
       rateOut: 5_000,
+      control: "direct",
     })
     expect(app).toHaveProperty("paths")
     expect(app).toHaveProperty("confidence")
+    expect(app).toHaveProperty("mechanism")
+    expect(payload.engines.length).toBeGreaterThan(0)
   })
 
   test("buildSnapshot handles a missing snapshot with an empty header", () => {
     const store = new FlowStore()
     const payload = buildSnapshot(store, engineWith(store), "not installed", 1)
     expect(payload.apps).toEqual([])
+    expect(payload.engines).toEqual([])
     expect(payload.header).toBeNull()
     expect(payload.wanRate).toEqual({ in: 0, out: 0 })
   })

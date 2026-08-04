@@ -13,6 +13,8 @@ export interface SerializedApp {
   pids: number[]
   verdict: string
   paths: string[]
+  mechanism: string
+  control: string
   connections: number
   rateIn: number
   rateOut: number
@@ -23,9 +25,18 @@ export interface SerializedApp {
   transports: string[]
   destinations: string[]
   regions: string[]
+  nodeRegions: string[]
   rules: string[]
   proxyChains: string[]
   confidence: string
+}
+
+export interface SerializedEngine {
+  process: string
+  pids: number[]
+  ports: string[]
+  roles: string[]
+  vpnInterfaces: string[]
 }
 
 export interface DaemonHeader {
@@ -70,6 +81,7 @@ export interface DaemonSnapshot {
   totals: { in: number; out: number }
   history: { inbound: number[]; outbound: number[] }
   apps: SerializedApp[]
+  engines: SerializedEngine[]
   statuses: {
     nettop: string
     clash: string
@@ -89,6 +101,8 @@ function serializeApp(app: {
   pids: number[]
   verdict: string
   paths: string[]
+  mechanism: string
+  control: string
   connections: number
   rateIn: number
   rateOut: number
@@ -99,6 +113,7 @@ function serializeApp(app: {
   transports: string[]
   destinations: string[]
   regions: string[]
+  nodeRegions: string[]
   rules: string[]
   proxyChains: string[]
   confidence: string
@@ -108,6 +123,8 @@ function serializeApp(app: {
     pids: app.pids,
     verdict: app.verdict,
     paths: app.paths,
+    mechanism: app.mechanism,
+    control: app.control,
     connections: app.connections,
     rateIn: app.rateIn,
     rateOut: app.rateOut,
@@ -118,6 +135,7 @@ function serializeApp(app: {
     transports: app.transports,
     destinations: app.destinations,
     regions: app.regions,
+    nodeRegions: app.nodeRegions,
     rules: app.rules,
     proxyChains: app.proxyChains,
     confidence: app.confidence,
@@ -132,6 +150,13 @@ export function buildSnapshot(
 ): DaemonSnapshot {
   const snapshot = store.getSnapshot()
   const apps = store.apps().slice(0, 200).map(serializeApp)
+  const engines = store.engines().map((item) => ({
+    process: item.process,
+    pids: item.pids,
+    ports: item.ports,
+    roles: item.roles,
+    vpnInterfaces: item.vpnInterfaces,
+  }))
   let header: DaemonHeader | null = null
   if (snapshot) {
     header = {
@@ -179,6 +204,7 @@ export function buildSnapshot(
     totals: { in: totals.rateIn, out: totals.rateOut },
     history: { inbound: history.inbound, outbound: history.outbound },
     apps,
+    engines,
     statuses: { ...engine.statuses, geo: geoStatus },
     header,
   }

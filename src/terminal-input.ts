@@ -21,6 +21,7 @@ const DASHBOARD_KEY_SEQUENCES = new Set([
   "4",
   "5",
   "l",
+  "a",
   "/",
   "p",
   " ",

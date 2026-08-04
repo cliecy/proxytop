@@ -2,7 +2,7 @@ import { runCommand } from "./commands"
 import { NettopCollector } from "./collectors/nettop"
 import { ClashCollector, controllerOwnerForUrl, discoverClashController } from "./collectors/clash"
 import { collectNetworkSnapshot } from "./collectors/system"
-import { knownProxyProcess } from "./classifier"
+import { discoverProxyEngines, knownProxyProcess } from "./classifier"
 import { formatRate, pathLabel } from "./format"
 import { GeoResolver } from "./geo"
 import { FlowStore } from "./store"
@@ -57,8 +57,16 @@ export async function runDoctor(): Promise<number> {
       `  ${item.name}: ${item.kind}, owner=${item.owner || "unattributed"}, state=${item.status}, default=${item.isDefault}, dns=${item.carriesDns}, addresses=${item.addresses.join(",") || "none"}`,
     )
   }
+  const { engines } = discoverProxyEngines(snapshot)
+  console.log(`Proxy engines (${engines.length}):`)
+  if (engines.length === 0) console.log("  none detected")
+  for (const engine of engines) {
+    console.log(
+      `  ${engine.process} ports=${engine.ports.join(",") || "-"} vpn=${engine.vpnInterfaces.join(",") || "-"} roles=${engine.roles.join(",")}`,
+    )
+  }
   const proxyListeners = snapshot.listeners.filter((listener) => knownProxyProcess(listener.process))
-  console.log(`Proxy-owned TCP listeners: ${proxyListeners.map((item) => `${item.process}@${item.host}:${item.port}`).join(", ") || "none"}`)
+  console.log(`Name-matched TCP listeners: ${proxyListeners.map((item) => `${item.process}@${item.host}:${item.port}`).join(", ") || "none"}`)
   console.log(`ZeroTier networks: ${snapshot.overlayNetworks.map((item) => `${item.name}[${item.id}]@${item.interfaceName} ${item.addresses.join("+")} ${item.status}`).join(", ") || "none"}`)
   console.log(
     `DNS resolvers: ${snapshot.dnsResolvers.map((item) => `${item.servers.join("+")}@${item.interfaceName || "global"}${item.scoped ? "(scoped)" : ""}`).join(", ") || "none"}`,
@@ -119,6 +127,7 @@ export async function inspectApp(
     console.log(`${app.process} [${app.verdict}] confidence=${app.confidence}`)
     console.log(`  PIDs: ${app.pids.join(", ")}`)
     console.log(`  Paths: ${app.paths.map((path) => pathLabel(path)).join(" + ")}`)
+    console.log(`  Control: ${app.mechanism}`)
     console.log(`  Proxy endpoint: ${app.proxyHops.join(", ") || "none observed"}`)
     console.log(`  Proxy configuration: ${app.proxyProtocols.join(", ") || "none observed"}`)
     console.log(`  Controller chain/rule: ${app.proxyChains.join(" | ") || "not available"} ${app.rules.join(" | ")}`)
@@ -126,7 +135,8 @@ export async function inspectApp(
     console.log(`  Interfaces: ${app.interfaces.join(", ") || "unknown"}`)
     console.log(`  Transport: ${app.transports.join(", ") || "unknown"}`)
     console.log(`  Destinations: ${app.destinations.join(", ") || (hidden ? "hidden by proxy/VPN" : "none observed")}`)
-    console.log(`  Target/remote country: ${app.regions.join(", ") || (hidden ? "hidden by proxy/VPN" : "unknown")}`)
+    console.log(`  Target country: ${app.regions.join(", ") || (hidden ? "hidden by proxy/VPN" : "—")}`)
+    console.log(`  Node country: ${app.nodeRegions.join(", ") || (hidden || app.verdict === "ENGINE" ? "not observed" : "—")}`)
     console.log(`  Observed socket rate: down=${formatRate(app.rateIn)} up=${formatRate(app.rateOut)}`)
   }
   return 0

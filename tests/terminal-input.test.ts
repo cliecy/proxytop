@@ -20,6 +20,7 @@ test("does not swallow ordinary keyboard escape sequences", () => {
 
 test("allows only dashboard keys outside search", () => {
   expect(isAllowedDashboardInputSequence("q", false)).toBe(true)
+  expect(isAllowedDashboardInputSequence("a", false)).toBe(true)
   expect(isAllowedDashboardInputSequence("\u001b[A", false)).toBe(true)
   expect(isAllowedDashboardInputSequence("x", false)).toBe(false)
   expect(isAllowedDashboardInputSequence("Q", false)).toBe(false)

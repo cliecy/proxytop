@@ -4,6 +4,7 @@ import { authorizePacketCapture, PktapCollector } from "./collectors/pktap"
 import { collectNetworkSnapshot } from "./collectors/system"
 import type { NetworkSnapshot, PacketEvidence } from "./domain"
 import type { GeoResolver } from "./geo"
+import { RouteLookup } from "./route-lookup"
 import type { FlowStore } from "./store"
 
 export interface EngineStatuses {
@@ -34,6 +35,7 @@ export class ProxyEngine {
   private nettop?: NettopCollector
   private pktap?: PktapCollector
   private clash?: ClashCollector
+  private routes?: RouteLookup
   private snapshotTimer?: ReturnType<typeof setInterval>
   private tickTimer?: ReturnType<typeof setInterval>
   private snapshotAbort?: AbortController
@@ -59,6 +61,11 @@ export class ProxyEngine {
       packetCaptureUser = await authorizePacketCapture()
       if (!packetCaptureUser) return false
     }
+
+    this.routes = new RouteLookup((host, interfaceName) => {
+      this.store.backfillInterface(host, interfaceName)
+    })
+    this.store.setRouteLookup(this.routes)
 
     this.nettop = new NettopCollector(
       (sample) => this.store.upsert(sample),
@@ -117,6 +124,7 @@ export class ProxyEngine {
     this.nettop?.stop()
     this.pktap?.stop()
     this.clash?.stop()
+    this.routes?.stop()
     this.setStatus("snapshot", "stopped")
   }
 

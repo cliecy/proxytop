@@ -109,7 +109,7 @@ proxytop geo update
 proxytop geo status
 ```
 
-The update downloads the `server-country` database used by `ip-location-api` into a private fixed cache directory. Its updater is launched directly with an argument array rather than through the dependency's shell-building wrapper. Normal monitoring performs local lookups and does not send observed destination IPs to a geolocation service. The displayed value is the target/remote IP's allocation country, not a guaranteed VPN exit location or exact physical location.
+The update downloads the `server-country` database used by `ip-location-api` into a private fixed cache directory. Its updater is launched directly with an argument array rather than through the dependency's shell-building wrapper. Normal monitoring performs local lookups and does not send observed destination IPs to a geolocation service. The displayed **target country** is the remote/destination IP allocation country. The **node country** is inferred from a connected VPN server address or a proxy engine's outer hop when available. Neither is a guaranteed VPN exit location or exact physical location.
 
 ## Clash-Compatible Controller
 
@@ -128,17 +128,22 @@ When available, the Apps view associates controller connections by source IP, po
 
 ## Keys
 
-- `1`: application verdicts
-- `2`: complete proxy/VPN/tunnel topology
-- `3`: raw connection evidence
-- `4`: diagnostics and uncertainty
-- `5`: settings and terminology guide
-- `l` in Settings: switch between English and Chinese explanations
+Default mode is simple: only the app coverage list (status / via / exit).
+
+- `a`: toggle advanced mode (topology, flows, diagnostics, collectors)
+- `1`: application coverage
+- `2`: topology (advanced) or settings (simple)
+- `3`: raw connection evidence (advanced)
+- `4`: diagnostics and uncertainty (advanced)
+- `5`: settings
+- `l`: switch between English and Chinese
 - `/`: filter by application or endpoint
 - `j`, `k`, or arrow keys: select or scroll
 - `s`: sort by speed, process, or path
 - `p` or Space: pause rendering
 - `q`: quit
+
+The menu bar app mirrors this: Apps is the default signal view; enable **Advanced mode** in Settings to show the Status tab and full evidence. The choice is stored in `~/.config/proxytop/config.json` as `advancedMode`.
 
 ## Path Labels
 
@@ -158,6 +163,12 @@ Application verdicts:
 - `OVERLAY`: the application is using an attributed overlay such as ZeroTier
 - `ENGINE`: the process is a proxy/VPN engine creating outer connections
 - `UNKNOWN`: evidence is insufficient for a reliable claim
+
+## Proxy Ownership And Coverage
+
+The Apps view reports both the verdict and the observed control mechanism. It can identify a system proxy, a local listener, a VPN/TUN interface, an overlay, a proxy-engine outer connection, or a physical/VM bridge direct path. The diagnostics view also lists active proxy engines and why each one was detected: known client name, system-proxy port, common proxy port, VPN service, or local-listener-plus-outbound behavior.
+
+`DIRECT` is intentional evidence: the process used a physical, bridge, or VM egress without an observed local proxy hop. `MIXED` means the same process has both proxied and direct connections and should be investigated. For virtual machines and containers, macOS can identify the host-side VM/bridge connection, but not the individual process inside the guest; configure the guest's proxy when its host-side connection is direct.
 
 The Settings view contains a built-in README for users who are not familiar with networking terminology. It explains verdicts such as `PROXIED`, `DIRECT`, and `MIXED`, path labels such as `PROXY`, `TUN`, and `OVERLAY`, and why some destinations are shown as hidden or unknown. Press `l` there to switch the guide between English and Chinese.
 

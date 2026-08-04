@@ -13,6 +13,7 @@ final class AppModel: ObservableObject {
   @Published var launchAtLogin = false
   @Published var launchMessage: String?
   @Published var language = "en"
+  @Published var advancedMode = false
   @Published var selectedProcess: String?
 
   private var process: Process?
@@ -30,7 +31,7 @@ final class AppModel: ObservableObject {
     }
 
     launchAtLogin = SMAppService.mainApp.status == .enabled
-    loadLanguage()
+    loadConfig()
 
     let proc = Process()
     proc.executableURL = engine
@@ -72,12 +73,74 @@ final class AppModel: ObservableObject {
   }
 
   var sortedApps: [SerializedApp] {
-    (snapshot?.apps ?? []).sorted { $0.totalRate > $1.totalRate }
+    var apps = snapshot?.apps ?? []
+    if !advancedMode {
+      apps = apps.filter { app in
+        if app.verdict == "DIRECT" || app.verdict == "MIXED" || app.verdict == "PROXIED" { return true }
+        if app.verdict == "ENGINE" || app.verdict == "OVERLAY" { return true }
+        if app.verdict == "LOCAL" { return false }
+        if app.verdict == "UNKNOWN", app.totalRate <= 0 { return false }
+        return app.connections > 0
+      }
+    }
+    // Leak-first: mixed/direct before proxied noise when rates are similar.
+    return apps.sorted { left, right in
+      let rank: (SerializedApp) -> Int = { app in
+        switch app.verdict {
+        case "MIXED": return 0
+        case "DIRECT": return 1
+        case "UNKNOWN": return 2
+        case "PROXIED": return 3
+        case "OVERLAY": return 4
+        case "ENGINE": return 5
+        default: return 6
+        }
+      }
+      let leftRank = rank(left)
+      let rightRank = rank(right)
+      if leftRank != rightRank { return leftRank < rightRank }
+      return left.totalRate > right.totalRate
+    }
   }
 
   var selectedApp: SerializedApp? {
     guard let process = selectedProcess else { return nil }
     return sortedApps.first { $0.process == process }
+  }
+
+  var visibleSections: [AppSection] {
+    advancedMode ? AppSection.allCases : [.apps, .settings]
+  }
+
+  var coverageSummary: (proxied: Int, direct: Int, mixed: Int) {
+    let apps = snapshot?.apps ?? []
+    return (
+      apps.filter { $0.verdict == "PROXIED" }.count,
+      apps.filter { $0.verdict == "DIRECT" }.count,
+      apps.filter { $0.verdict == "MIXED" }.count
+    )
+  }
+
+  var vpnSummary: String {
+    guard let services = snapshot?.header?.vpnServices else {
+      return localText(language, "none", "无")
+    }
+    let connected = services.filter { $0.state.localizedCaseInsensitiveContains("connect") }
+    if connected.isEmpty { return localText(language, "none", "无") }
+    return connected.map { service in
+      if let iface = service.interfaceName {
+        return "\(service.name)/\(iface)"
+      }
+      return service.name
+    }.joined(separator: ", ")
+  }
+
+  var systemProxySummary: String {
+    guard let proxy = snapshot?.header?.proxy else {
+      return localText(language, "unknown", "未知")
+    }
+    let endpoints = proxy.endpoints
+    return endpoints.isEmpty ? localText(language, "disabled", "关闭") : endpoints.joined(separator: " · ")
   }
 
   private func refreshSelection() {
@@ -123,27 +186,47 @@ final class AppModel: ObservableObject {
     return home.appendingPathComponent(".config/proxytop")
   }
 
-  private func loadLanguage() {
+  private func loadConfig() {
     let url = configDirectory().appendingPathComponent("config.json")
     guard let data = try? Data(contentsOf: url),
-          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let raw = object["language"] as? String else {
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       language = "en"
+      advancedMode = false
       return
     }
-    language = raw == "zh" ? "zh" : "en"
+    if let raw = object["language"] as? String {
+      language = raw == "zh" ? "zh" : "en"
+    } else {
+      language = "en"
+    }
+    advancedMode = object["advancedMode"] as? Bool ?? false
   }
 
-  func saveLanguage() {
+  func saveConfig() {
     let directory = configDirectory()
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     guard let data = try? JSONSerialization.data(
-      withJSONObject: ["language": language],
+      withJSONObject: [
+        "language": language,
+        "advancedMode": advancedMode,
+      ],
       options: [.prettyPrinted, .sortedKeys]
     ) else {
       return
     }
     try? data.write(to: directory.appendingPathComponent("config.json"), options: .atomic)
+  }
+
+  func saveLanguage() {
+    saveConfig()
+  }
+
+  func setAdvancedMode(_ enabled: Bool) {
+    advancedMode = enabled
+    if !enabled, section == .status {
+      section = .apps
+    }
+    saveConfig()
   }
 
   private func runPolling() async {

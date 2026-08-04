@@ -84,7 +84,7 @@ async function main(): Promise<number> {
   const config = await loadConfig()
   const store = new FlowStore()
   store.setRegionLookup(geo.lookup)
-  const dashboard = new Dashboard(store, geo.status, config.language)
+  const dashboard = new Dashboard(store, geo.status, config.language, config.advancedMode)
   const engine = new ProxyEngine(store, geo, {
     privileged,
     clashControllerUrl,

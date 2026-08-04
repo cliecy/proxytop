@@ -76,6 +76,8 @@ struct SerializedApp: Decodable, Identifiable {
   let pids: [Int]
   let verdict: String
   let paths: [String]
+  let mechanism: String
+  let control: String
   let connections: Int
   let rateIn: Double
   let rateOut: Double
@@ -86,11 +88,51 @@ struct SerializedApp: Decodable, Identifiable {
   let transports: [String]
   let destinations: [String]
   let regions: [String]
+  let nodeRegions: [String]
   let proxyChains: [String]
   let rules: [String]
   let confidence: String
 
   var totalRate: Double { rateIn + rateOut }
+
+  enum CodingKeys: String, CodingKey {
+    case process, pids, verdict, paths, mechanism, control, connections, rateIn, rateOut
+    case proxyHops, proxyProtocols, interfaces, tunnelOwners, transports
+    case destinations, regions, nodeRegions, proxyChains, rules, confidence
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    process = try container.decode(String.self, forKey: .process)
+    pids = try container.decode([Int].self, forKey: .pids)
+    verdict = try container.decode(String.self, forKey: .verdict)
+    paths = try container.decode([String].self, forKey: .paths)
+    mechanism = try container.decodeIfPresent(String.self, forKey: .mechanism) ?? ""
+    control = try container.decodeIfPresent(String.self, forKey: .control) ?? ""
+    connections = try container.decode(Int.self, forKey: .connections)
+    rateIn = try container.decode(Double.self, forKey: .rateIn)
+    rateOut = try container.decode(Double.self, forKey: .rateOut)
+    proxyHops = try container.decode([String].self, forKey: .proxyHops)
+    proxyProtocols = try container.decode([String].self, forKey: .proxyProtocols)
+    interfaces = try container.decode([String].self, forKey: .interfaces)
+    tunnelOwners = try container.decode([String].self, forKey: .tunnelOwners)
+    transports = try container.decode([String].self, forKey: .transports)
+    destinations = try container.decode([String].self, forKey: .destinations)
+    regions = try container.decode([String].self, forKey: .regions)
+    nodeRegions = try container.decodeIfPresent([String].self, forKey: .nodeRegions) ?? []
+    proxyChains = try container.decode([String].self, forKey: .proxyChains)
+    rules = try container.decode([String].self, forKey: .rules)
+    confidence = try container.decode(String.self, forKey: .confidence)
+  }
+}
+
+struct SerializedEngine: Decodable, Identifiable {
+  var id: String { process }
+  let process: String
+  let pids: [Int]
+  let ports: [String]
+  let roles: [String]
+  let vpnInterfaces: [String]
 }
 
 struct DaemonSnapshot: Decodable {
@@ -100,6 +142,24 @@ struct DaemonSnapshot: Decodable {
   let totals: Rate
   let history: History
   let apps: [SerializedApp]
+  let engines: [SerializedEngine]
   let statuses: Statuses
   let header: Header?
+
+  enum CodingKeys: String, CodingKey {
+    case kind, collectedAt, wanRate, totals, history, apps, engines, statuses, header
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    kind = try container.decode(String.self, forKey: .kind)
+    collectedAt = try container.decode(Double.self, forKey: .collectedAt)
+    wanRate = try container.decode(Rate.self, forKey: .wanRate)
+    totals = try container.decode(Rate.self, forKey: .totals)
+    history = try container.decode(History.self, forKey: .history)
+    apps = try container.decode([SerializedApp].self, forKey: .apps)
+    engines = try container.decodeIfPresent([SerializedEngine].self, forKey: .engines) ?? []
+    statuses = try container.decode(Statuses.self, forKey: .statuses)
+    header = try container.decodeIfPresent(Header.self, forKey: .header)
+  }
 }

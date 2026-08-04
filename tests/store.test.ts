@@ -275,6 +275,155 @@ describe("flow store", () => {
     expect(store.apps()[0]).toMatchObject({ verdict: "DIRECT", proxyChains: [] })
   })
 
+  test("reclassifies existing flows when the snapshot changes", () => {
+    const store = new FlowStore()
+    store.setSnapshot({
+      ...snapshot(),
+      vpnInterfaces: [],
+      defaultInterface: "en0",
+      interfaces: snapshot().interfaces.map((item) =>
+        item.name === "utun6" ? { ...item, kind: "tunnel", owner: undefined, isDefault: false } : item,
+      ),
+    })
+    store.upsert(
+      flow({
+        process: "Browser",
+        remote: { raw: "1.1.1.1:443", host: "1.1.1.1", port: 443 },
+        interfaceName: "utun6",
+      }),
+    )
+    expect(store.list()[0]?.path).toBe("UNKNOWN")
+
+    store.setSnapshot(snapshot())
+    expect(store.list()[0]?.path).toBe("TUNNELED")
+  })
+
+  test("backfills missing interfaces from route lookup results", () => {
+    const store = new FlowStore()
+    store.setSnapshot(snapshot())
+    store.upsert(
+      flow({
+        process: "curl",
+        remote: { raw: "8.8.8.8:443", host: "8.8.8.8", port: 443 },
+        interfaceName: undefined,
+      }),
+    )
+    expect(store.list()[0]?.path).toBe("UNKNOWN")
+    store.backfillInterface("8.8.8.8", "en0")
+    expect(store.list()[0]).toMatchObject({ interfaceName: "en0", path: "DIRECT" })
+  })
+
+  test("exposes control mechanism and discovered proxy engines", () => {
+    const store = new FlowStore()
+    store.setSnapshot({
+      ...snapshot(),
+      listeners: [
+        ...snapshot().listeners,
+        { process: "AirportShell", pid: 400, host: "127.0.0.1", port: 7890 },
+      ],
+    })
+    store.upsert(
+      flow({
+        process: "curl",
+        local: { raw: "127.0.0.1:52000", host: "127.0.0.1", port: 52000 },
+        remote: { raw: "127.0.0.1:7890", host: "127.0.0.1", port: 7890 },
+        interfaceName: "lo0",
+      }),
+    )
+    store.upsert(
+      flow({
+        process: "OrbStack",
+        remote: { raw: "1.1.1.1:443", host: "1.1.1.1", port: 443 },
+        interfaceName: "bridge100",
+      }),
+    )
+    const engines = store.engines()
+    expect(engines.some((engine) => engine.process === "AirportShell")).toBe(true)
+    expect(store.apps().find((app) => app.process === "curl")).toMatchObject({
+      verdict: "PROXIED",
+      control: "local-proxy",
+    })
+    expect(store.apps().find((app) => app.process === "OrbStack")).toMatchObject({
+      verdict: "DIRECT",
+      control: "direct",
+    })
+    expect(store.apps().find((app) => app.process === "OrbStack")?.mechanism).toContain("not proxied")
+  })
+
+  test("records VPN/proxy node countries separately from target countries", () => {
+    const store = new FlowStore()
+    const base = snapshot()
+    store.setSnapshot({
+      ...base,
+      vpnServices: [
+        {
+          ...base.vpnServices[0]!,
+          serverAddress: "203.0.113.10",
+        },
+      ],
+    })
+    store.setRegionLookup((host) => {
+      if (host === "203.0.113.10") return "JP"
+      if (host === "8.8.8.8") return "US"
+      if (host === "9.9.9.9") return "CH"
+      return undefined
+    })
+    store.upsert(
+      flow({
+        process: "Browser",
+        remote: { raw: "1.1.1.1:443", host: "1.1.1.1", port: 443 },
+        interfaceName: "utun6",
+      }),
+    )
+    store.upsert(
+      flow({
+        process: "MacPacketTunnel",
+        pid: 100,
+        remote: { raw: "9.9.9.9:443", host: "9.9.9.9", port: 443 },
+        interfaceName: "en0",
+      }),
+    )
+    store.upsert(
+      flow({
+        process: "App",
+        local: { raw: "127.0.0.1:51000", host: "127.0.0.1", port: 51000 },
+        remote: { raw: "127.0.0.1:1082", host: "127.0.0.1", port: 1082 },
+        interfaceName: "lo0",
+      }),
+    )
+
+    expect(store.apps().find((app) => app.process === "Browser")).toMatchObject({
+      verdict: "PROXIED",
+      nodeRegions: ["JP"],
+    })
+    expect(store.apps().find((app) => app.process === "App")).toMatchObject({
+      verdict: "PROXIED",
+      nodeRegions: ["CH"],
+    })
+  })
+
+  test("ignores unconnected sockets when building app coverage", () => {
+    const store = new FlowStore()
+    store.setSnapshot(snapshot())
+    store.upsert(
+      flow({
+        process: "Listener",
+        remote: { raw: "*:*", host: "*" },
+        interfaceName: undefined,
+      }),
+    )
+    store.upsert(
+      flow({
+        process: "Browser",
+        remote: { raw: "127.0.0.1:1082", host: "127.0.0.1", port: 1082 },
+        interfaceName: "lo0",
+      }),
+    )
+    const apps = store.apps()
+    expect(apps.find((app) => app.process === "Listener")).toBeUndefined()
+    expect(apps.find((app) => app.process === "Browser")?.verdict).toBe("PROXIED")
+  })
+
   test("does not join a UDP controller decision to a TCP flow sharing its port", () => {
     const store = new FlowStore()
     store.setSnapshot(snapshot())

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { classifyFlow } from "../src/classifier"
+import { classifyFlow, discoverProxyEngines, knownProxyProcess } from "../src/classifier"
 import type { FlowSample, NetworkSnapshot } from "../src/domain"
 
 const snapshot: NetworkSnapshot = {
@@ -82,6 +82,58 @@ describe("flow classifier", () => {
     )
     expect(result.path).toBe("LOCAL_PROXY")
     expect(result.confidence).toBe("HIGH")
+  })
+
+  test("detects third-party clients by common proxy port without a name whitelist hit", () => {
+    expect(knownProxyProcess("SakuraCat")).toBe(true)
+    const localSnapshot: NetworkSnapshot = {
+      ...snapshot,
+      proxy: { ...snapshot.proxy, httpEnabled: false, httpsEnabled: false, socksEnabled: false },
+      listeners: [{ process: "AirportShell", pid: 400, host: "127.0.0.1", port: 7890 }],
+    }
+    const { proxyProcesses, engines } = discoverProxyEngines(localSnapshot)
+    expect(proxyProcesses.has("AirportShell")).toBe(true)
+    expect(engines.some((engine) => engine.process === "AirportShell" && engine.roles.includes("common-port"))).toBe(true)
+    const result = classifyFlow(
+      flow({ remote: { raw: "127.0.0.1:7890", host: "127.0.0.1", port: 7890 }, interfaceName: "lo0" }),
+      { snapshot: localSnapshot, proxyProcesses },
+    )
+    expect(result.path).toBe("LOCAL_PROXY")
+  })
+
+  test("classifies VM bridge egress as direct so leaks are visible", () => {
+    const result = classifyFlow(
+      flow({
+        process: "OrbStack",
+        remote: { raw: "1.1.1.1:443", host: "1.1.1.1", port: 443 },
+        interfaceName: "bridge100",
+      }),
+      context,
+    )
+    expect(result.path).toBe("DIRECT")
+  })
+
+  test("discovers listen+outbound engines without a known name", () => {
+    const localSnapshot: NetworkSnapshot = {
+      ...snapshot,
+      proxy: { ...snapshot.proxy, httpEnabled: false, httpsEnabled: false },
+      listeners: [{ process: "CustomClient", pid: 500, host: "127.0.0.1", port: 38472 }],
+    }
+    const outer = flow({
+      process: "CustomClient",
+      pid: 500,
+      remote: { raw: "9.9.9.9:443", host: "9.9.9.9", port: 443 },
+      interfaceName: "en0",
+    })
+    const { proxyProcesses, engines } = discoverProxyEngines(localSnapshot, [outer])
+    expect(proxyProcesses.has("CustomClient")).toBe(false)
+    expect(engines.find((engine) => engine.process === "CustomClient")?.roles).toContain("listen+outbound")
+    expect(
+      classifyFlow(
+        flow({ remote: { raw: "127.0.0.1:38472", host: "127.0.0.1", port: 38472 }, interfaceName: "lo0" }),
+        { snapshot: localSnapshot, proxyProcesses },
+      ).path,
+    ).toBe("LAN")
   })
 
   test("does not mistake an unrelated loopback listener for a proxy", () => {

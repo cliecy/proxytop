@@ -76,9 +76,11 @@ func pathLabel(_ path: String, language: String) -> String {
 }
 
 func appVia(_ app: SerializedApp) -> String {
+  if !app.mechanism.isEmpty { return app.mechanism }
   if !app.proxyHops.isEmpty { return app.proxyHops.joined(separator: ", ") }
   if !app.tunnelOwners.isEmpty { return app.tunnelOwners.joined(separator: ", ") }
-  return app.interfaces.joined(separator: ", ")
+  if !app.interfaces.isEmpty { return app.interfaces.joined(separator: ", ") }
+  return "—"
 }
 
 func appProtocol(_ app: SerializedApp) -> String {
@@ -88,5 +90,24 @@ func appProtocol(_ app: SerializedApp) -> String {
     seen.insert(protocolName)
     result.append(protocolName)
   }
-  return result.isEmpty ? "-" : result.joined(separator: ", ")
+  return result.isEmpty ? "—" : result.joined(separator: ", ")
+}
+
+func appExit(_ app: SerializedApp, language: String) -> String {
+  let proxiedLike =
+    app.verdict == "PROXIED"
+    || app.verdict == "ENGINE"
+    || app.paths.contains("TUNNELED")
+    || !app.proxyHops.isEmpty
+  if proxiedLike {
+    if !app.nodeRegions.isEmpty {
+      let nodes = app.nodeRegions.joined(separator: ",")
+      return localText(language, "node \(nodes)", "节点 \(nodes)")
+    }
+    return localText(language, "hidden", "隐藏")
+  }
+  if !app.regions.isEmpty {
+    return app.regions.joined(separator: ",")
+  }
+  return "—"
 }

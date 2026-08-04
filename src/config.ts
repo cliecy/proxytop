@@ -5,9 +5,10 @@ export type Language = "en" | "zh"
 
 export interface UserConfig {
   language: Language
+  advancedMode: boolean
 }
 
-const DEFAULT_CONFIG: UserConfig = { language: "en" }
+const DEFAULT_CONFIG: UserConfig = { language: "en", advancedMode: false }
 
 export function configFilePath(): string {
   const configHome = Bun.env.XDG_CONFIG_HOME || join(Bun.env.HOME || ".", ".config")
@@ -18,8 +19,10 @@ export function parseConfig(value: string): UserConfig {
   try {
     const parsed: unknown = JSON.parse(value)
     if (typeof parsed !== "object" || parsed === null) return { ...DEFAULT_CONFIG }
-    const language = (parsed as { language?: unknown }).language
-    return language === "zh" || language === "en" ? { language } : { ...DEFAULT_CONFIG }
+    const record = parsed as { language?: unknown; advancedMode?: unknown }
+    const language = record.language === "zh" || record.language === "en" ? record.language : DEFAULT_CONFIG.language
+    const advancedMode = typeof record.advancedMode === "boolean" ? record.advancedMode : DEFAULT_CONFIG.advancedMode
+    return { language, advancedMode }
   } catch {
     return { ...DEFAULT_CONFIG }
   }

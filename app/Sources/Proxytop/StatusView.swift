@@ -65,9 +65,19 @@ struct StatusView: View {
       }
     }
 
-    rows.append(("应用数", "\(model.snapshot?.apps.count ?? 0)", .secondary))
+    let coverage = model.coverageSummary
+    rows.append((
+      localText(model.language, "COVERAGE", "覆盖"),
+      localText(
+        model.language,
+        "\(coverage.proxied) proxied · \(coverage.direct) direct · \(coverage.mixed) mixed",
+        "\(coverage.proxied) 代理 · \(coverage.direct) 直连 · \(coverage.mixed) 混合"
+      ),
+      coverage.direct > 0 || coverage.mixed > 0 ? .orange : .green
+    ))
+    rows.append((localText(model.language, "APPS", "应用数"), "\(model.snapshot?.apps.count ?? 0)", .secondary))
     if let error = model.lastError {
-      rows.append(("引擎错误", error, .red))
+      rows.append((localText(model.language, "ENGINE ERROR", "引擎错误"), error, .red))
     }
     return rows
   }

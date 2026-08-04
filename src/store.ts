@@ -1,16 +1,20 @@
-import { classifyFlow, knownProxyProcess } from "./classifier"
+import { classifyFlow, discoverProxyEngines } from "./classifier"
 import type {
   AppSummary,
+  AppVerdict,
   ClassifiedFlow,
   Confidence,
+  ControlMechanism,
   FlowSample,
   NetworkSnapshot,
   PathKind,
   ProcessAggregate,
   ProxyControllerConnection,
   ProxyControllerSnapshot,
+  ProxyEngineInfo,
 } from "./domain"
 import { isIP } from "node:net"
+import type { RouteLookup } from "./route-lookup"
 
 const PATH_PRIORITY: PathKind[] = [
   "BYPASSED",
@@ -40,13 +44,19 @@ export class FlowStore {
   private historyOut: number[] = []
   private regionLookup: (host: string) => string | undefined = () => undefined
   private controllerSnapshot?: ProxyControllerSnapshot
+  private routeLookup?: RouteLookup
 
   setRegionLookup(lookup: (host: string) => string | undefined): void {
     this.regionLookup = lookup
   }
 
+  setRouteLookup(lookup: RouteLookup): void {
+    this.routeLookup = lookup
+  }
+
   setSnapshot(snapshot: NetworkSnapshot): void {
     this.snapshot = snapshot
+    this.reclassifyAll()
   }
 
   getSnapshot(): NetworkSnapshot | undefined {
@@ -65,20 +75,28 @@ export class FlowStore {
     return undefined
   }
 
+  /** Apply a route-table interface to all flows missing one for this remote host. */
+  backfillInterface(host: string, interfaceName: string): void {
+    if (!this.snapshot || !interfaceName) return
+    for (const flow of this.flows.values()) {
+      if (flow.remote.host !== host) continue
+      if (flow.interfaceName) continue
+      flow.interfaceName = interfaceName
+      flow.interfaceSource = "route"
+      this.reclassifyFlow(flow)
+    }
+  }
+
   upsert(sample: FlowSample): void {
     if (!this.snapshot) return
-    const id = flowId(sample)
+    const enriched = this.enrichSample(sample)
+    const id = flowId(enriched)
     const previous = this.flows.get(id)
-    const elapsed = previous ? Math.max((sample.timestamp - previous.lastSeen) / 1_000, 0.001) : 0
+    const elapsed = previous ? Math.max((enriched.timestamp - previous.lastSeen) / 1_000, 0.001) : 0
     const reliableInterval = elapsed >= 0.25
-    const rateIn = previous && reliableInterval && sample.bytesIn >= previous.bytesIn ? (sample.bytesIn - previous.bytesIn) / elapsed : 0
-    const rateOut = previous && reliableInterval && sample.bytesOut >= previous.bytesOut ? (sample.bytesOut - previous.bytesOut) / elapsed : 0
-    const proxyProcesses = new Set(
-      this.snapshot.listeners
-        .filter((listener) => knownProxyProcess(listener.process))
-        .map((listener) => listener.process),
-    )
-    const classification = classifyFlow(sample, { snapshot: this.snapshot, proxyProcesses })
+    const rateIn = previous && reliableInterval && enriched.bytesIn >= previous.bytesIn ? (enriched.bytesIn - previous.bytesIn) / elapsed : 0
+    const rateOut = previous && reliableInterval && enriched.bytesOut >= previous.bytesOut ? (enriched.bytesOut - previous.bytesOut) / elapsed : 0
+    const classification = this.classify(enriched)
 
     if (!previous && this.flows.size >= 20_000) {
       const oldest = this.flows.keys().next().value
@@ -86,14 +104,18 @@ export class FlowStore {
     }
 
     this.flows.set(id, {
-      ...sample,
+      ...enriched,
       id,
       ...classification,
       rateIn,
       rateOut,
-      firstSeen: previous?.firstSeen ?? sample.timestamp,
-      lastSeen: sample.timestamp,
+      firstSeen: previous?.firstSeen ?? enriched.timestamp,
+      lastSeen: enriched.timestamp,
     })
+
+    if (!enriched.interfaceName && enriched.remote.host !== "*") {
+      this.routeLookup?.request(enriched.remote.host)
+    }
   }
 
   tick(now = Date.now()): void {
@@ -157,6 +179,7 @@ export class FlowStore {
         transports: Set<string>
         destinations: Set<string>
         regions: Set<string>
+        nodeRegions: Set<string>
         rules: Set<string>
         proxyChains: Set<string>
         confidences: Set<Confidence>
@@ -172,11 +195,22 @@ export class FlowStore {
     >()
 
     const proxyOutboundInterfaces = new Map<string, Set<string>>()
+    const proxyOuterRegions = new Map<string, Set<string>>()
     for (const flow of this.flows.values()) {
-      if (flow.path !== "PROXY_OUTBOUND" || !flow.interfaceName) continue
-      const interfaces = proxyOutboundInterfaces.get(flow.process) ?? new Set<string>()
-      interfaces.add(flow.interfaceName)
-      proxyOutboundInterfaces.set(flow.process, interfaces)
+      if (flow.path !== "PROXY_OUTBOUND") continue
+      if (flow.interfaceName) {
+        const interfaces = proxyOutboundInterfaces.get(flow.process) ?? new Set<string>()
+        interfaces.add(flow.interfaceName)
+        proxyOutboundInterfaces.set(flow.process, interfaces)
+      }
+      if (flow.remote.host !== "*" && !this.isLocalAddress(flow.remote.host)) {
+        const region = this.publicRegion(flow.remote.host)
+        if (region) {
+          const regions = proxyOuterRegions.get(flow.process) ?? new Set<string>()
+          regions.add(region)
+          proxyOuterRegions.set(flow.process, regions)
+        }
+      }
     }
     const controllerBySourcePort = new Map<number, ProxyControllerConnection[]>()
     for (const connection of this.getControllerSnapshot()?.connections ?? []) {
@@ -186,8 +220,21 @@ export class FlowStore {
       controllerBySourcePort.set(connection.sourcePort, connections)
     }
 
+    const vpnNodeRegions = new Map<string, Set<string>>()
+    for (const service of this.snapshot.vpnServices) {
+      if (!service.interfaceName || !/connect/i.test(service.state)) continue
+      if (!service.serverAddress) continue
+      const region = this.publicRegion(service.serverAddress)
+      if (!region) continue
+      const regions = vpnNodeRegions.get(service.interfaceName) ?? new Set<string>()
+      regions.add(region)
+      vpnNodeRegions.set(service.interfaceName, regions)
+    }
+
     for (const flow of this.flows.values()) {
       const controllerConnection = this.matchControllerConnection(flow, controllerBySourcePort)
+      // Unconnected / listening sockets have no route; they only create UNKNOWN noise.
+      if (flow.remote.host === "*" && !controllerConnection) continue
       const app = byProcess.get(flow.process) ?? {
         pids: new Set<number>(),
         paths: new Set<PathKind>(),
@@ -198,6 +245,7 @@ export class FlowStore {
         transports: new Set<string>(),
         destinations: new Set<string>(),
         regions: new Set<string>(),
+        nodeRegions: new Set<string>(),
         rules: new Set<string>(),
         proxyChains: new Set<string>(),
         confidences: new Set<Confidence>(),
@@ -220,6 +268,8 @@ export class FlowStore {
       if (flow.path === "PROXY_OUTBOUND") {
         app.outerRateIn += flow.rateIn
         app.outerRateOut += flow.rateOut
+        const region = this.publicRegion(flow.remote.host)
+        if (region) app.nodeRegions.add(region)
       }
       app.transports.add(`${flow.protocol.toUpperCase()}${flow.family}`)
       if (flow.interfaceName) app.interfaces.add(flow.interfaceName)
@@ -253,6 +303,11 @@ export class FlowStore {
           `${networkInterface.owner}/${networkInterface.name}${networkInterface.effectiveInterface ? ` -> ${networkInterface.effectiveInterface}` : ""}`,
         )
       }
+      if (flow.path === "TUNNELED" && flow.interfaceName) {
+        for (const region of vpnNodeRegions.get(flow.interfaceName) ?? []) {
+          app.nodeRegions.add(region)
+        }
+      }
 
       if (flow.path === "LOCAL_PROXY" && flow.remote.port) {
         const listener = this.snapshot.listeners.find(
@@ -263,10 +318,17 @@ export class FlowStore {
         for (const protocol of this.proxyProtocolsFor(flow.remote.host, flow.remote.port)) {
           app.proxyProtocols.add(protocol)
         }
+        if (listener) {
+          for (const region of proxyOuterRegions.get(listener.process) ?? []) {
+            app.nodeRegions.add(region)
+          }
+        }
       } else if (!controllerConnection && flow.remote.host !== "*" && !this.isLocalAddress(flow.remote.host)) {
-        app.destinations.add(flow.remote.host)
-        const region = this.publicRegion(flow.remote.host)
-        if (region) app.regions.add(region)
+        if (flow.path !== "PROXY_OUTBOUND") {
+          app.destinations.add(flow.remote.host)
+          const region = this.publicRegion(flow.remote.host)
+          if (region) app.regions.add(region)
+        }
       }
     }
 
@@ -276,7 +338,7 @@ export class FlowStore {
       const direct = app.hasDirect
       const overlay = app.hasOverlay
       const routeKinds = Number(proxied) + Number(direct) + Number(overlay)
-      const verdict = paths.includes("PROXY_OUTBOUND") && !proxied && !direct
+      const verdict: AppVerdict = paths.includes("PROXY_OUTBOUND") && !proxied && !direct
         ? "ENGINE"
         : routeKinds > 1
           ? "MIXED"
@@ -294,7 +356,7 @@ export class FlowStore {
         : app.confidences.has("MEDIUM")
           ? "MEDIUM"
           : "HIGH"
-      return {
+      const summary = {
         process,
         pids: [...app.pids],
         verdict,
@@ -309,10 +371,13 @@ export class FlowStore {
         transports: [...app.transports],
         destinations: [...app.destinations].slice(0, 5),
         regions: [...app.regions].slice(0, 5),
+        nodeRegions: [...app.nodeRegions].slice(0, 5),
         rules: [...app.rules],
         proxyChains: [...app.proxyChains],
         confidence,
       }
+      const { control, mechanism } = this.describeMechanism(summary)
+      return { ...summary, control, mechanism }
     })
   }
 
@@ -348,6 +413,107 @@ export class FlowStore {
 
   history(): { inbound: number[]; outbound: number[] } {
     return { inbound: [...this.historyIn], outbound: [...this.historyOut] }
+  }
+
+  /** Active proxy/VPN engines discovered on this Mac. */
+  engines(): ProxyEngineInfo[] {
+    if (!this.snapshot) return []
+    return discoverProxyEngines(this.snapshot, this.flows.values()).engines
+  }
+
+  private enrichSample(sample: FlowSample): FlowSample {
+    if (sample.interfaceName || !sample.remote.host || sample.remote.host === "*") return sample
+    const cached = this.routeLookup?.getCached(sample.remote.host)
+    if (!cached) return sample
+    return { ...sample, interfaceName: cached, interfaceSource: "route" }
+  }
+
+  private classify(sample: FlowSample) {
+    // Classification only needs confirmed owners; candidate listen+outbound discovery is exposed separately.
+    const { proxyProcesses } = discoverProxyEngines(this.snapshot!)
+    return classifyFlow(sample, { snapshot: this.snapshot!, proxyProcesses })
+  }
+
+  private describeMechanism(
+    app: {
+      verdict: AppSummary["verdict"]
+      paths: PathKind[]
+      proxyHops: string[]
+      tunnelOwners: string[]
+      interfaces: string[]
+      proxyChains: string[]
+      rules: string[]
+      proxyProtocols: string[]
+    },
+  ): { control: ControlMechanism; mechanism: string } {
+    if (app.verdict === "MIXED") {
+      return { control: "mixed", mechanism: "mixed: proxy/VPN and direct both observed" }
+    }
+    if (app.verdict === "ENGINE" || app.paths.includes("PROXY_OUTBOUND")) {
+      const iface = app.interfaces.join(", ") || "physical"
+      return { control: "engine-outbound", mechanism: `proxy engine outbound via ${iface}` }
+    }
+    if (app.proxyChains.length) {
+      const chain = app.proxyChains[0]
+      const rule = app.rules[0] ? ` rule=${app.rules[0]}` : ""
+      return { control: "controller", mechanism: `controller → ${chain}${rule}` }
+    }
+    if (app.proxyHops.length) {
+      const hop = app.proxyHops[0] || ""
+      const systemLike = /HTTP|HTTPS|SOCKS/i.test(app.proxyProtocols.join(" "))
+      const possible = app.proxyProtocols.includes("local proxy (protocol unknown)")
+      return {
+        control: systemLike ? "system-proxy" : "local-proxy",
+        mechanism: systemLike
+          ? `system proxy → ${hop}`
+          : `${possible ? "possible local proxy" : "local proxy"} → ${hop}`,
+      }
+    }
+    if (app.tunnelOwners.length || app.paths.includes("TUNNELED")) {
+      return {
+        control: "vpn-tun",
+        mechanism: `VPN/TUN → ${app.tunnelOwners[0] || app.interfaces.join(", ") || "utun"}`,
+      }
+    }
+    if (app.verdict === "OVERLAY" || app.paths.includes("OVERLAY")) {
+      return {
+        control: "overlay",
+        mechanism: `overlay → ${app.tunnelOwners[0] || app.interfaces.join(", ") || "virtual"}`,
+      }
+    }
+    if (app.verdict === "DIRECT" || app.paths.includes("DIRECT")) {
+      return {
+        control: "direct",
+        mechanism: `direct via ${app.interfaces.join(", ") || "physical"} (not proxied)`,
+      }
+    }
+    if (app.verdict === "LOCAL" || app.paths.every((path) => path === "LAN")) {
+      return { control: "local", mechanism: "local/LAN only" }
+    }
+    return { control: "unknown", mechanism: "insufficient evidence" }
+  }
+
+  private reclassifyFlow(flow: ClassifiedFlow): void {
+    if (!this.snapshot) return
+    const classification = this.classify(flow)
+    flow.path = classification.path
+    flow.confidence = classification.confidence
+    flow.evidence = classification.evidence
+  }
+
+  private reclassifyAll(): void {
+    if (!this.snapshot) return
+    for (const flow of this.flows.values()) {
+      if (!flow.interfaceName && flow.remote.host !== "*") {
+        const cached = this.routeLookup?.getCached(flow.remote.host)
+        if (cached) {
+          flow.interfaceName = cached
+          flow.interfaceSource = "route"
+        }
+        else this.routeLookup?.request(flow.remote.host)
+      }
+      this.reclassifyFlow(flow)
+    }
   }
 
   private proxyProtocolsFor(host: string, port: number): string[] {

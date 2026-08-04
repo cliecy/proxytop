@@ -6,6 +6,14 @@ enum AppSection: String, CaseIterable, Identifiable {
   case settings = "Settings"
 
   var id: String { rawValue }
+
+  func title(language: String) -> String {
+    switch self {
+    case .apps: return localText(language, "Apps", "应用")
+    case .status: return localText(language, "Status", "状态")
+    case .settings: return localText(language, "Settings", "设置")
+    }
+  }
 }
 
 struct ContentView: View {
@@ -20,8 +28,8 @@ struct ContentView: View {
           set: { model.section = $0 }
         )
       ) {
-        ForEach(AppSection.allCases) { section in
-          Text(section.rawValue).tag(section)
+        ForEach(model.visibleSections) { section in
+          Text(section.title(language: model.language)).tag(section)
         }
       }
       .pickerStyle(.segmented)
@@ -41,6 +49,11 @@ struct ContentView: View {
     }
     .frame(width: 380)
     .background(Color(nsColor: .windowBackgroundColor))
+    .onChange(of: model.advancedMode) { _, enabled in
+      if !enabled, model.section == .status {
+        model.section = .apps
+      }
+    }
   }
 }
 
@@ -50,11 +63,16 @@ struct AppsView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       header
+      coverageBar
       Divider()
       appList
       if let app = model.selectedApp {
         Divider()
-        AppDetailView(app: app, language: model.language)
+        if model.advancedMode {
+          AppDetailView(app: app, language: model.language)
+        } else {
+          SimpleAppDetailView(app: app, language: model.language)
+        }
       }
     }
     .padding(.horizontal, 12)
@@ -81,12 +99,81 @@ struct AppsView: View {
     }
   }
 
+  private var coverageBar: some View {
+    let coverage = model.coverageSummary
+    let engines = model.snapshot?.engines ?? []
+    let directApps = model.sortedApps.filter { $0.verdict == "DIRECT" || $0.verdict == "MIXED" }
+      .prefix(6)
+      .map(\.process)
+      .joined(separator: ", ")
+    return VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 8) {
+        coverageChip(
+          label: localText(model.language, "proxied", "代理"),
+          value: coverage.proxied,
+          color: .green
+        )
+        coverageChip(
+          label: localText(model.language, "direct", "直连"),
+          value: coverage.direct,
+          color: .red
+        )
+        coverageChip(
+          label: localText(model.language, "mixed", "混合"),
+          value: coverage.mixed,
+          color: .orange
+        )
+        Spacer()
+      }
+      Text("\(localText(model.language, "Engines", "代理引擎")) · \(engines.isEmpty ? localText(model.language, "none", "无") : engines.map { engineLabel($0) }.joined(separator: " · "))")
+        .font(.system(size: 10))
+        .foregroundStyle(engines.isEmpty ? Color.secondary : Color.green)
+        .lineLimit(2)
+        .truncationMode(.tail)
+      Text("\(localText(model.language, "Proxy", "系统代理")) · \(model.systemProxySummary)")
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .truncationMode(.tail)
+      Text("VPN · \(model.vpnSummary)")
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .truncationMode(.tail)
+      if !directApps.isEmpty {
+        Text("\(localText(model.language, "Not proxied", "未走代理")) · \(directApps)")
+          .font(.system(size: 10, weight: .medium))
+          .foregroundStyle(.red)
+          .lineLimit(2)
+          .truncationMode(.tail)
+      }
+    }
+  }
+
+  private func engineLabel(_ engine: SerializedEngine) -> String {
+    var bits: [String] = []
+    if let port = engine.ports.first { bits.append(port) }
+    if let vpn = engine.vpnInterfaces.first { bits.append("VPN \(vpn)") }
+    return bits.isEmpty ? engine.process : "\(engine.process) (\(bits.joined(separator: ", ")))"
+  }
+
+  private func coverageChip(label: String, value: Int, color: Color) -> some View {
+    Text("\(value) \(label)")
+      .font(.system(size: 10, weight: .semibold))
+      .padding(.horizontal, 6)
+      .padding(.vertical, 2)
+      .background(Capsule().fill(color.opacity(value > 0 ? 0.18 : 0.08)))
+      .foregroundStyle(value > 0 ? color : .secondary)
+  }
+
   private var appList: some View {
     ScrollView {
       LazyVStack(spacing: 1) {
         if model.sortedApps.isEmpty {
           VStack(spacing: 6) {
-            Text(model.connected ? "等待采集数据…" : "引擎未连接")
+            Text(model.connected
+              ? localText(model.language, "Waiting for traffic…", "等待采集数据…")
+              : localText(model.language, "Engine disconnected", "引擎未连接"))
               .foregroundStyle(.secondary)
             if let error = model.lastError {
               Text(error)
@@ -100,6 +187,8 @@ struct AppsView: View {
           ForEach(model.sortedApps) { app in
             AppRow(
               app: app,
+              language: model.language,
+              advanced: model.advancedMode,
               selected: app.process == model.selectedProcess,
               onSelect: { model.selectedProcess = app.process }
             )
@@ -112,6 +201,8 @@ struct AppsView: View {
 
 struct AppRow: View {
   let app: SerializedApp
+  let language: String
+  let advanced: Bool
   let selected: Bool
   let onSelect: () -> Void
 
@@ -123,28 +214,36 @@ struct AppRow: View {
           .lineLimit(1)
           .truncationMode(.tail)
         Spacer(minLength: 4)
-        Text(flags)
-          .font(.caption)
+        if advanced {
+          Text(flags)
+            .font(.caption)
+        }
         Text("↓\(formatRate(app.rateIn)) ↑\(formatRate(app.rateOut))")
           .font(.system(size: 10).monospacedDigit())
           .foregroundStyle(.secondary)
-        Text(app.verdict)
+        Text(verdictLabel(app.verdict, language: language))
           .font(.system(size: 9, weight: .bold))
           .padding(.horizontal, 5)
           .padding(.vertical, 2)
           .background(Capsule().fill(color.opacity(0.18)))
           .foregroundStyle(color)
-        Text("\(app.connections)")
-          .font(.system(size: 10).monospacedDigit())
-          .foregroundStyle(.tertiary)
+        if advanced {
+          Text("\(app.connections)")
+            .font(.system(size: 10).monospacedDigit())
+            .foregroundStyle(.tertiary)
+        }
       }
       HStack(spacing: 4) {
-        Text("via \(appVia(app))")
+        Text(appVia(app))
           .font(.system(size: 10))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(app.verdict == "DIRECT" || app.verdict == "MIXED" ? Color.red.opacity(0.85) : Color.secondary)
           .lineLimit(1)
           .truncationMode(.tail)
-        if appProtocol(app) != "-" {
+        Text("· \(appExit(app, language: language))")
+          .font(.system(size: 10))
+          .foregroundStyle(.tertiary)
+          .lineLimit(1)
+        if advanced, appProtocol(app) != "—" {
           Text("· \(appProtocol(app))")
             .font(.system(size: 10))
             .foregroundStyle(.tertiary)
@@ -164,6 +263,48 @@ struct AppRow: View {
 
   private var flags: String {
     app.regions.prefix(3).map { flagEmoji(for: $0) }.joined()
+  }
+}
+
+struct SimpleAppDetailView: View {
+  let app: SerializedApp
+  let language: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      DetailLine(
+        label: localText(language, "APP", "应用"),
+        chunks: [
+          (app.process, Color.primary),
+          ("  \(verdictLabel(app.verdict, language: language))", verdictColor(app.verdict)),
+        ]
+      )
+      DetailLine(
+        label: localText(language, "CONTROL", "控制"),
+        chunks: [(appVia(app), verdictColor(app.verdict))]
+      )
+      DetailLine(
+        label: localText(language, "EXIT", "出口"),
+        chunks: [(appExit(app, language: language), exitColor)]
+      )
+      if app.verdict == "DIRECT" || app.verdict == "MIXED" {
+        DetailLine(
+          label: localText(language, "HINT", "提示"),
+          chunks: [(
+            localText(language, "Not fully proxied — configure proxy if needed.", "未完全走代理 — 如需代理请配置。"),
+            .orange
+          )]
+        )
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private var exitColor: Color {
+    let exit = appExit(app, language: language)
+    if !app.nodeRegions.isEmpty || !app.regions.isEmpty { return .primary }
+    if exit.contains("hidden") || exit.contains("隐藏") { return .orange }
+    return .secondary
   }
 }
 
@@ -221,6 +362,12 @@ struct AppDetailView: View {
           (targetCountry, targetCountryColor),
         ]
       )
+      DetailLine(
+        label: localText(language, "NODE COUNTRY", "节点国家"),
+        chunks: [
+          (nodeCountry, app.nodeRegions.isEmpty ? .secondary : .green),
+        ]
+      )
     }
     .frame(maxWidth: .infinity, alignment: .leading)
   }
@@ -244,15 +391,23 @@ struct AppDetailView: View {
   private var targetCountry: String {
     if !app.regions.isEmpty { return app.regions.joined(separator: ", ") }
     if hiddenDestination || app.paths.contains("TUNNELED") {
-      return localText(language, "hidden by proxy/VPN; provider API required", "已被代理/VPN 隐藏；需要服务商 API")
+      return localText(language, "hidden behind proxy/VPN", "被代理/VPN 隐藏")
     }
-    return localText(language, "unknown", "未知")
+    return "—"
   }
 
   private var targetCountryColor: Color {
     if !app.regions.isEmpty { return .primary }
     if hiddenDestination || app.paths.contains("TUNNELED") { return .orange }
     return .secondary
+  }
+
+  private var nodeCountry: String {
+    if !app.nodeRegions.isEmpty { return app.nodeRegions.joined(separator: ", ") }
+    if app.verdict == "PROXIED" || app.paths.contains("TUNNELED") || app.verdict == "ENGINE" {
+      return localText(language, "not observed", "未观测到")
+    }
+    return "—"
   }
 }
 

@@ -27,6 +27,8 @@ export interface FlowSample {
   local: Endpoint
   remote: Endpoint
   interfaceName?: string
+  /** Whether the interface came from nettop or a best-effort route-table fallback. */
+  interfaceSource?: "nettop" | "route"
   state?: string
   bytesIn: number
   bytesOut: number
@@ -143,11 +145,35 @@ export interface ProcessAggregate {
 
 export type AppVerdict = "PROXIED" | "DIRECT" | "MIXED" | "OVERLAY" | "ENGINE" | "LOCAL" | "UNKNOWN"
 
+/** How this app's traffic is controlled (human-readable). */
+export type ControlMechanism =
+  | "system-proxy"
+  | "local-proxy"
+  | "vpn-tun"
+  | "overlay"
+  | "controller"
+  | "engine-outbound"
+  | "direct"
+  | "mixed"
+  | "local"
+  | "unknown"
+
+export interface ProxyEngineInfo {
+  process: string
+  pids: number[]
+  ports: string[]
+  roles: string[]
+  vpnInterfaces: string[]
+}
+
 export interface AppSummary {
   process: string
   pids: number[]
   verdict: AppVerdict
   paths: PathKind[]
+  /** Human-readable control path: system proxy / local hop / VPN / direct. */
+  mechanism: string
+  control: ControlMechanism
   connections: number
   rateIn: number
   rateOut: number
@@ -157,7 +183,10 @@ export interface AppSummary {
   tunnelOwners: string[]
   transports: string[]
   destinations: string[]
+  /** Target/remote IP allocation country (not guaranteed exit). */
   regions: string[]
+  /** VPN server or proxy-engine outer hop country. */
+  nodeRegions: string[]
   rules: string[]
   proxyChains: string[]
   confidence: Confidence
