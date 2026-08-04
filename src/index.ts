@@ -1,11 +1,9 @@
 #!/usr/bin/env bun
 
-import { NettopCollector } from "./collectors/nettop"
-import { ClashCollector, controllerOwnerForUrl, discoverClashController } from "./collectors/clash"
-import { authorizePacketCapture, PktapCollector } from "./collectors/pktap"
-import { collectNetworkSnapshot } from "./collectors/system"
 import { loadConfig } from "./config"
+import { runDaemon } from "./daemon"
 import { checkDns, checkGit, checkSsh, checkUrl, inspectApp, runDoctor } from "./diagnostics"
+import { ProxyEngine } from "./engine"
 import { GeoResolver, geoStatus, updateGeoDatabase } from "./geo"
 import { FlowStore } from "./store"
 import { Dashboard } from "./ui"
@@ -23,6 +21,7 @@ Usage:
   proxytop inspect <app-name>
   proxytop geo status
   proxytop geo update
+  proxytop daemon [--privileged]
 
 Options:
   --privileged  Enable Apple pktap metadata capture through a scoped sudo tcpdump process
@@ -56,6 +55,17 @@ async function main(): Promise<number> {
   }
   if (args[0] === "geo" && args[1] === "status" && args.length === 2) return geoStatus()
   if (args[0] === "geo" && args[1] === "update" && args.length === 2) return updateGeoDatabase()
+  if (args[0] === "daemon") {
+    const rest = args.slice(1)
+    const privileged = rest.includes("--privileged")
+    const supervised = rest.includes("--supervised")
+    const unknown = rest.filter((arg) => arg !== "--privileged" && arg !== "--supervised")
+    if (unknown.length > 0) {
+      console.error("Unknown daemon arguments. Run proxytop --help for usage.")
+      return 2
+    }
+    return runDaemon({ privileged, supervised, clashControllerUrl, clashSecret })
+  }
 
   const dashboardArgs = args.filter((arg) => arg !== "--privileged")
   if (dashboardArgs.length > 0 || args.filter((arg) => arg === "--privileged").length > 1) {
@@ -69,99 +79,31 @@ async function main(): Promise<number> {
   }
 
   const privileged = args.includes("--privileged")
-  let packetCaptureUser: string | undefined
-  if (privileged) {
-    packetCaptureUser = await authorizePacketCapture()
-    if (!packetCaptureUser) {
-      console.error("sudo authorization or safe privilege-drop user detection failed; start without --privileged.")
-      return 1
-    }
-  }
-
   const geo = new GeoResolver()
   await geo.initialize()
   const config = await loadConfig()
   const store = new FlowStore()
   store.setRegionLookup(geo.lookup)
-  const initialSnapshot = await collectNetworkSnapshot()
-  store.setSnapshot(initialSnapshot)
   const dashboard = new Dashboard(store, geo.status, config.language)
-  const nettop = new NettopCollector(
-    (sample) => store.upsert(sample),
-    (status) => dashboard.setNettopStatus(status),
-  )
-  const pktap = privileged
-    ? new PktapCollector(
-        packetCaptureUser!,
-        (packet) => dashboard.addPacket(packet),
-        (status) => dashboard.setPktapStatus(status),
-      )
-    : undefined
-  let clash: ClashCollector | undefined
-  const ensureClashCollector = (snapshot: typeof initialSnapshot): void => {
-    if (clash) return
-    const clashUrl = discoverClashController(snapshot.listeners, clashControllerUrl, Boolean(clashSecret))
-    if (!clashUrl) {
-      if (clashSecret && !clashControllerUrl) dashboard.setClashStatus("explicit URL required for secret")
-      else if (clashControllerUrl) dashboard.setClashStatus("invalid controller URL")
-      return
-    }
-    clash = new ClashCollector(
-      clashUrl,
-      clashSecret,
-      clashSecret ? controllerOwnerForUrl(clashUrl, snapshot.listeners) : undefined,
-      (controllerSnapshot) => store.setControllerSnapshot(controllerSnapshot),
-      (status) => dashboard.setClashStatus(status),
-    )
-    clash.start()
-  }
-  ensureClashCollector(initialSnapshot)
-
-  let snapshotAbort: AbortController | undefined
-  let snapshotPromise: Promise<void> | undefined
-  const snapshotTimer = setInterval(() => {
-    if (snapshotPromise) return
-    const controller = new AbortController()
-    snapshotAbort = controller
-    const pending = collectNetworkSnapshot(controller.signal)
-      .then((snapshot) => {
-        store.setSnapshot(snapshot)
-        ensureClashCollector(snapshot)
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted) dashboard.setNettopStatus(`snapshot error: ${String(error).slice(0, 80)}`)
-      })
-      .finally(() => {
-        if (snapshotPromise === pending) {
-          snapshotPromise = undefined
-          snapshotAbort = undefined
-        }
-      })
-    snapshotPromise = pending
-  }, 5_000)
-  const tickTimer = setInterval(() => store.tick(), 1_000)
-
-  nettop.start()
-  if (pktap && !(await pktap.start())) {
-    nettop.stop()
-    clash?.stop()
-    clearInterval(snapshotTimer)
-    clearInterval(tickTimer)
-    snapshotAbort?.abort()
-    await snapshotPromise?.catch(() => {})
+  const engine = new ProxyEngine(store, geo, {
+    privileged,
+    clashControllerUrl,
+    clashSecret,
+    onPacket: (packet) => dashboard.addPacket(packet),
+    onStatus: (statuses) => {
+      dashboard.setNettopStatus(statuses.nettop)
+      dashboard.setPktapStatus(statuses.pktap)
+      dashboard.setClashStatus(statuses.clash)
+    },
+  })
+  if (!(await engine.start())) {
     console.error("Packet capture authorization failed; start without --privileged for rootless mode.")
     return 1
   }
   try {
     await dashboard.run(() => {})
   } finally {
-    clearInterval(snapshotTimer)
-    clearInterval(tickTimer)
-    snapshotAbort?.abort()
-    await snapshotPromise?.catch(() => {})
-    nettop.stop()
-    pktap?.stop()
-    clash?.stop()
+    engine.stop()
   }
   return 0
 }

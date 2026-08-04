@@ -43,6 +43,48 @@ proxytop --privileged
 
 Only the fixed `tcpdump` child process receives elevated privileges. It is launched with sudo's no-timestamp-update mode and drops back to the invoking user after opening the capture interface. It excludes common plaintext DNS ports and limits each in-memory capture to the first 64 bytes. `proxytop` retains only process, PID, interface, direction, and counters; raw packet lines and payloads are not saved to disk. The privileged `tcpdump` process still temporarily sees packet headers and potentially a few application bytes, so use this mode only when needed.
 
+## Menu Bar App
+
+A native macOS menu bar app (SwiftUI shell + the same Bun engine) is available on every release.
+
+### Install
+
+```bash
+# download Proxytop-<version>.dmg from the release, or via Homebrew:
+brew install --cask proxytop
+```
+
+Until the project is signed and notarized with a Developer ID certificate, Gatekeeper will block the first launch of a downloaded build. Open it once with right-click → Open, or run:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Proxytop.app"
+```
+
+### Build from source
+
+```bash
+scripts/build-app.sh
+open build/Proxytop.app
+```
+
+The app embeds the engine as a daemon (`proxytop daemon --supervised`) communicating over a private Unix socket at `~/Library/Application Support/Proxytop/engine.sock`. No TCP port is opened and requests require a per-launch bearer token.
+
+### Release pipeline
+
+```bash
+scripts/build-app.sh        # engine + Swift shell -> Proxytop.app (ad-hoc signed)
+scripts/package-dmg.sh      # -> Proxytop-<version>.dmg (+ notarization with PROXYTOP_NOTARY_*)
+```
+
+The release workflow signs with a Developer ID certificate and notarizes the DMG when the following repository secrets are configured:
+
+- `PROXYTOP_CERT_B64` / `PROXYTOP_CERT_PASSWORD` — Developer ID Application `.p12`
+- `PROXYTOP_NOTARY_KEY_ID` / `PROXYTOP_NOTARY_KEY_ISSUER_ID` / `PROXYTOP_NOTARY_KEY_B64` — App Store Connect API key (or `PROXYTOP_APPLE_ID` / `PROXYTOP_APPLE_PASSWORD` / `PROXYTOP_APPLE_TEAM_ID`)
+
+The Homebrew cask template lives in `cask/proxytop.rb`.
+
+On macOS 26 and later, the app must be enabled under System Settings → Menu Bar before its status bar icon appears.
+
 ## Diagnostics
 
 ```bash

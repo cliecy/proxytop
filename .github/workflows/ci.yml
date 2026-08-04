@@ -19,3 +19,11 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run typecheck
+
+  build-app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compile Swift menu bar shell
+        run: swift build -c release
+        working-directory: app

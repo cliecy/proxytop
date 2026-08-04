@@ -4,3 +4,6 @@ node_modules/
 *.pcap
 *.pcapng
 *.bun-build*
+build/
+app/.build/
+*.dmg

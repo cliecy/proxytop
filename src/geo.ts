@@ -20,6 +20,15 @@ function directories(): { dataDir: string; tmpDataDir: string; databaseFile: str
   }
 }
 
+function packageDirectory(): string | undefined {
+  try {
+    const modulePath = fileURLToPath(import.meta.resolve("ip-location-api"))
+    return dirname(dirname(modulePath))
+  } catch {
+    return undefined
+  }
+}
+
 function configureEnvironment(dataDir: string, tmpDataDir: string, skipInitialReload: boolean): void {
   for (const key of Object.keys(Bun.env)) {
     if (key.startsWith("ILA_")) delete Bun.env[key]
@@ -31,8 +40,8 @@ function configureEnvironment(dataDir: string, tmpDataDir: string, skipInitialRe
   Bun.env.ILA_AUTO_UPDATE = "false"
   Bun.env.ILA_SILENT = "true"
   Bun.env.ILA_SKIP_INITIAL_RELOAD = skipInitialReload ? "true" : "false"
-  const modulePath = fileURLToPath(import.meta.resolve("ip-location-api"))
-  Bun.env.ILA_API_DIR = dirname(dirname(modulePath))
+  const apiDir = packageDirectory()
+  if (apiDir) Bun.env.ILA_API_DIR = apiDir
 }
 
 async function directorySize(path: string): Promise<number> {
@@ -59,7 +68,12 @@ export class GeoResolver {
     }
 
     configureEnvironment(paths.dataDir, paths.tmpDataDir, false)
-    this.module = (await import("ip-location-api")) as unknown as GeoModule
+    try {
+      this.module = (await import("ip-location-api")) as unknown as GeoModule
+    } catch (error) {
+      this.status = `offline country DB unavailable (${error instanceof Error ? error.message : String(error)})`
+      return
+    }
     this.status = "offline country DB ready"
   }
 
@@ -91,7 +105,7 @@ export async function updateGeoDatabase(): Promise<number> {
   }
   configureEnvironment(stagingData, stagingTmp, true)
   try {
-    const apiDir = Bun.env.ILA_API_DIR
+    const apiDir = packageDirectory()
     if (!apiDir) throw new Error("Unable to resolve ip-location-api")
     const script = join(import.meta.dir, "geo-update-worker.mjs")
     console.log("Downloading and building the offline server-country database...")

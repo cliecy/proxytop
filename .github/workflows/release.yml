@@ -53,8 +53,57 @@ jobs:
             ${{ runner.temp }}/proxytop-release/*.tar.gz.sha256
           if-no-files-found: error
 
+  build-app:
+    needs: verify
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - name: Import Developer ID certificate
+        env:
+          CERT_B64: ${{ secrets.PROXYTOP_CERT_B64 }}
+          CERT_PASSWORD: ${{ secrets.PROXYTOP_CERT_PASSWORD }}
+        run: |
+          if [ -z "$CERT_B64" ]; then
+            echo "PROXYTOP_SIGN_IDENTITY=-" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "$CERT_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          security create-keychain -p temp "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p temp "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k temp "$KEYCHAIN" >/dev/null
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk '/Developer ID Application/ {print $2}')"
+          echo "PROXYTOP_SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+      - name: Build app bundle
+        env:
+          PROXYTOP_SIGN_IDENTITY: ${{ env.PROXYTOP_SIGN_IDENTITY }}
+          PROXYTOP_VERSION: ${{ env.RELEASE_TAG != '' && env.RELEASE_TAG || '1.2.0' }}
+        run: bash scripts/build-app.sh
+      - name: Package DMG and notarize
+        env:
+          PROXYTOP_NOTARY_KEY_ID: ${{ secrets.PROXYTOP_NOTARY_KEY_ID }}
+          PROXYTOP_NOTARY_KEY_ISSUER_ID: ${{ secrets.PROXYTOP_NOTARY_KEY_ISSUER_ID }}
+          PROXYTOP_NOTARY_KEY_B64: ${{ secrets.PROXYTOP_NOTARY_KEY_B64 }}
+          PROXYTOP_APPLE_ID: ${{ secrets.PROXYTOP_APPLE_ID }}
+          PROXYTOP_APPLE_PASSWORD: ${{ secrets.PROXYTOP_APPLE_PASSWORD }}
+          PROXYTOP_APPLE_TEAM_ID: ${{ secrets.PROXYTOP_APPLE_TEAM_ID }}
+        run: bash scripts/package-dmg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proxytop-app
+          path: |
+            build/Proxytop-*.dmg
+            build/Proxytop-*.dmg.sha256
+          if-no-files-found: error
+
   publish:
-    needs: build
+    needs: [build, build-app]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
