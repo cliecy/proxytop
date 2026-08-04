@@ -50,8 +50,9 @@ A native macOS menu bar app (SwiftUI shell + the same Bun engine) is available o
 ### Install
 
 ```bash
-# download Proxytop-<version>.dmg from the release, or via Homebrew:
-brew install --cask proxytop
+# download Proxytop-<version>.dmg from the release, or via Homebrew (cask in cliecy/tap):
+brew tap cliecy/tap
+brew install --cask cliecy/tap/proxytop-app
 ```
 
 Until the project is signed and notarized with a Developer ID certificate, Gatekeeper will block the first launch of a downloaded build. Open it once with right-click → Open, or run:
@@ -81,7 +82,7 @@ The release workflow signs with a Developer ID certificate and notarizes the DMG
 - `PROXYTOP_CERT_B64` / `PROXYTOP_CERT_PASSWORD` — Developer ID Application `.p12`
 - `PROXYTOP_NOTARY_KEY_ID` / `PROXYTOP_NOTARY_KEY_ISSUER_ID` / `PROXYTOP_NOTARY_KEY_B64` — App Store Connect API key (or `PROXYTOP_APPLE_ID` / `PROXYTOP_APPLE_PASSWORD` / `PROXYTOP_APPLE_TEAM_ID`)
 
-The Homebrew cask template lives in `cask/proxytop.rb`.
+The Homebrew cask (`proxytop-app`) lives in the [cliecy/tap](https://github.com/cliecy/homebrew-tap) tap and is updated automatically on each release.
 
 On macOS 26 and later, the app must be enabled under System Settings → Menu Bar before its status bar icon appears.
 
