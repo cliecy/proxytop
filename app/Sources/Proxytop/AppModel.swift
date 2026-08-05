@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import ServiceManagement
 
@@ -30,7 +31,7 @@ final class AppModel: ObservableObject {
       return
     }
 
-    launchAtLogin = SMAppService.mainApp.status == .enabled
+    launchAtLogin = isLaunchAtLoginEnabled
     loadConfig()
 
     let proc = Process()
@@ -155,20 +156,116 @@ final class AppModel: ObservableObject {
   }
 
   func setLaunchAtLogin(_ enabled: Bool) {
-    do {
-      if enabled {
-        if SMAppService.mainApp.status == .enabled {
-          launchMessage = "已在开机启动列表中"
-        } else {
-          try SMAppService.mainApp.register()
-          launchMessage = "已加入开机启动（需把 App 放到 /Applications）"
-        }
-      } else {
-        try SMAppService.mainApp.unregister()
-        launchMessage = "已移除开机启动"
+    if enabled {
+      do {
+        try enableLaunchAtLogin()
+      } catch {
+        launchAtLogin = false
+        launchMessage = localText(
+          language,
+          "Failed to enable launch at login: \(error.localizedDescription)",
+          "开机启动设置失败：\(error.localizedDescription)"
+        )
       }
+    } else {
+      disableLaunchAtLogin()
+      launchAtLogin = isLaunchAtLoginEnabled
+      launchMessage = localText(language, "Launch at login disabled", "已移除开机启动")
+    }
+  }
+
+  var isLaunchAtLoginEnabled: Bool {
+    SMAppService.mainApp.status == .enabled || launchAgentInstalled
+  }
+
+  private func enableLaunchAtLogin() throws {
+    if SMAppService.mainApp.status == .enabled {
+      launchAtLogin = true
+      launchMessage = localText(language, "Launch at login enabled", "已开启开机启动")
+      return
+    }
+    if appInSupportedLocation {
+      try SMAppService.mainApp.register()
+      launchAtLogin = true
+      launchMessage = localText(language, "Launch at login enabled", "已开启开机启动")
+      return
+    }
+    if writeLaunchAgent(), bootstrapLaunchAgent() {
+      launchAtLogin = true
+      launchMessage = localText(language, "Launch at login enabled (LaunchAgent)", "已开启开机启动（LaunchAgent）")
+      return
+    }
+    throw CocoaError(.fileWriteUnknown)
+  }
+
+  private func disableLaunchAtLogin() {
+    if SMAppService.mainApp.status == .enabled {
+      try? SMAppService.mainApp.unregister()
+    }
+    if launchAgentInstalled {
+      _ = runLaunchctl(["bootout", "gui/\(getuid())/com.proxytop.app"])
+      try? FileManager.default.removeItem(at: launchAgentURL)
+    }
+  }
+
+  private var appInSupportedLocation: Bool {
+    let path = Bundle.main.bundleURL.standardizedFileURL.path
+    let homeApplications = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Applications").path
+    return path.hasPrefix("/Applications/")
+      || path.hasPrefix("/System/Applications/")
+      || path.hasPrefix(homeApplications + "/")
+  }
+
+  private var launchAgentURL: URL {
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/LaunchAgents/com.proxytop.app.plist")
+  }
+
+  private var launchAgentInstalled: Bool {
+    FileManager.default.isReadableFile(atPath: launchAgentURL.path)
+  }
+
+  private func writeLaunchAgent() -> Bool {
+    let plist: [String: Any] = [
+      "Label": "com.proxytop.app",
+      "ProgramArguments": ["/usr/bin/open", Bundle.main.bundleURL.path],
+      "RunAtLoad": true,
+      "ProcessType": "Interactive",
+    ]
+    guard let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) else {
+      return false
+    }
+    do {
+      try FileManager.default.createDirectory(
+        at: launchAgentURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      try data.write(to: launchAgentURL, options: .atomic)
+      return true
     } catch {
-      launchMessage = "开机启动不可用（开发构建）：\(error.localizedDescription)"
+      return false
+    }
+  }
+
+  private func bootstrapLaunchAgent() -> Bool {
+    _ = runLaunchctl(["bootout", "gui/\(getuid())/com.proxytop.app"])
+    return runLaunchctl(["bootstrap", "gui/\(getuid())", launchAgentURL.path])
+  }
+
+  @discardableResult
+  private func runLaunchctl(_ arguments: [String]) -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    do {
+      try process.run()
+      process.waitUntilExit()
+      return process.terminationStatus == 0
+    } catch {
+      return false
     }
   }
 
