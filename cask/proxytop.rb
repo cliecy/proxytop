@@ -10,8 +10,8 @@
 # blocked by Gatekeeper. Open once with right-click -> Open, or run:
 #   xattr -dr com.apple.quarantine "/Applications/Proxytop.app"
 cask "proxytop-app" do
-  version "1.3.0"
-  sha256 "ee191354cffb08a15f707d28ee4c5fa49dd5680893bbc9c3a5657a1691341e41"
+  version "1.4.0"
+  sha256 "41fd8b20755dd552fa0545b4bb07167a8e97bfdec4db40f7a9db8e86d7afbd0b"
 
   url "https://github.com/cliecy/proxytop/releases/download/v#{version}/Proxytop-#{version}.dmg",
       verified: "github.com/cliecy/proxytop/"
