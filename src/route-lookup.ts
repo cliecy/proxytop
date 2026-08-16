@@ -1,5 +1,6 @@
 import { isIP } from "node:net"
 import { runCommand } from "./commands"
+import { isLocalDestination } from "./network-address"
 
 export interface RouteGetInfo {
   interfaceName?: string
@@ -14,12 +15,7 @@ export function parseRouteGet(output: string): RouteGetInfo {
 }
 
 function isLookupableHost(host: string): boolean {
-  if (!host || host === "*" || isIP(host) === 0) return false
-  if (host === "127.0.0.1" || host === "::1") return false
-  if (/^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false
-  if (/^169\.254\./.test(host) || /^fe80:/i.test(host)) return false
-  if (/^198\.(18|19)\./.test(host)) return false
-  return true
+  return isIP(host) !== 0 && !isLocalDestination(host)
 }
 
 export class RouteLookup {

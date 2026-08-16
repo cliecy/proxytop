@@ -91,9 +91,10 @@ export class ProxyEngine {
         .then((snapshot) => {
           this.store.setSnapshot(snapshot)
           this.ensureClashCollector(snapshot)
+          this.setStatus("snapshot", "active")
         })
         .catch((error) => {
-          if (!controller.signal.aborted) this.setStatus("nettop", `snapshot error: ${String(error).slice(0, 80)}`)
+          if (!controller.signal.aborted) this.setStatus("snapshot", `snapshot error: ${String(error).slice(0, 80)}`)
         })
         .finally(() => {
           if (this.snapshotPromise === pending) {

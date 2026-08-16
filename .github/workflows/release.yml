@@ -27,9 +27,21 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - name: Verify release ref
+        shell: bash
+        run: |
+          actual_tag="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+          package_version="$(bun -e 'console.log((await Bun.file("package.json").json()).version)')"
+          if [[ "$actual_tag" != "$RELEASE_TAG" || "$RELEASE_TAG" != "v${package_version}" ]]; then
+            echo "release ref mismatch: expected=$RELEASE_TAG actual=$actual_tag package=v${package_version}" >&2
+            exit 1
+          fi
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run typecheck
@@ -39,6 +51,9 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -58,6 +73,9 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}

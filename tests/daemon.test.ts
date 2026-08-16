@@ -118,6 +118,7 @@ describe("daemon IPC", () => {
 
     const engine = engineWith(store)
     engine.setStatus("nettop", "active")
+    engine.setStatus("snapshot", "snapshot error: test")
     engine.setStatus("clash", "not detected")
     const payload = buildSnapshot(store, engine, "offline country DB ready", 2_500)
 
@@ -127,6 +128,7 @@ describe("daemon IPC", () => {
     expect(payload.history).toEqual({ inbound: [], outbound: [] })
     expect(payload.statuses).toMatchObject({
       nettop: "active",
+      snapshot: "snapshot error: test",
       clash: "not detected",
       pktap: "off",
       geo: "offline country DB ready",

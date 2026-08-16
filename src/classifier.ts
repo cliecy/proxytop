@@ -8,6 +8,7 @@ import type {
   ProxyEngineInfo,
 } from "./domain"
 import { isIP } from "node:net"
+import { isLocalDestination } from "./network-address"
 
 export interface Classification {
   path: PathKind
@@ -39,15 +40,6 @@ function isLoopback(host: string): boolean {
   return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "*"
 }
 
-function isLan(host: string): boolean {
-  if (isLoopback(host) || host.endsWith(".local")) return true
-  if (/^10\./.test(host) || /^192\.168\./.test(host)) return true
-  const private172 = host.match(/^172\.(\d+)\./)
-  if (private172?.[1] && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return true
-  if (/^169\.254\./.test(host) || /^fe80:/i.test(host) || /^ff0[0-9a-f]:/i.test(host)) return true
-  if (/^198\.(18|19)\./.test(host)) return true
-  return false
-}
 
 function configuredProxyEndpoints(context: ClassificationContext): Array<{ host: string; port: number }> {
   const proxy = context.snapshot.proxy
@@ -145,7 +137,7 @@ export function discoverProxyEngines(
       flow.interfaceName &&
       physical.has(flow.interfaceName) &&
       flow.remote.host !== "*" &&
-      !isLan(flow.remote.host)
+      !isLocalDestination(flow.remote.host)
     ) {
       const entry = ensure(flow.process)
       entry.pids.add(flow.pid)
@@ -259,7 +251,7 @@ export function classifyFlow(
 
   if (proxyProcess && interfaceName && context.snapshot.physicalInterfaces.includes(interfaceName)) {
     // Engine sockets on physical egress (including unbound UDP) are outer path, not app leaks.
-    if (flow.remote.host === "*" || !isLan(flow.remote.host)) {
+    if (flow.remote.host === "*" || !isLocalDestination(flow.remote.host)) {
       return {
         path: "PROXY_OUTBOUND",
         confidence: flow.interfaceSource === "route" ? "MEDIUM" : "HIGH",
@@ -317,7 +309,7 @@ export function classifyFlow(
     }
   }
 
-  if (isLan(flow.remote.host)) {
+  if (isLocalDestination(flow.remote.host)) {
     return {
       path: "LAN",
       confidence: "HIGH",

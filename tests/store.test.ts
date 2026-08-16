@@ -133,6 +133,34 @@ describe("flow store", () => {
     expect(store.wanTotals()).toEqual({ rateIn: 1_000, rateOut: 500 })
   })
 
+  test("aggregates CGNAT and IPv6 ULA traffic as local", () => {
+    const store = new FlowStore()
+    store.setSnapshot(snapshot())
+    const samples = [
+      flow({
+        process: "LocalOnly",
+        remote: { raw: "100.64.1.2:443", host: "100.64.1.2", port: 443 },
+      }),
+      flow({
+        process: "LocalOnly",
+        family: 6,
+        local: { raw: "[fd00::2]:50001", host: "fd00::2", port: 50001 },
+        remote: { raw: "[fd00::1]:443", host: "fd00::1", port: 443 },
+      }),
+    ]
+    for (const sample of samples) store.upsert(sample)
+    for (const sample of samples) {
+      store.upsert({ ...sample, timestamp: 2_000, bytesIn: 1_000, bytesOut: 500 })
+    }
+    expect(store.apps().find((app) => app.process === "LocalOnly")).toMatchObject({
+      verdict: "LOCAL",
+      paths: ["LAN"],
+      rateIn: 2_000,
+      rateOut: 1_000,
+    })
+    expect(store.wanTotals()).toEqual({ rateIn: 0, rateOut: 0 })
+  })
+
   test("ENGINE app rates count only physical outer sockets", () => {
     const store = new FlowStore()
     store.setSnapshot(snapshot())

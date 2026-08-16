@@ -10,6 +10,8 @@ export interface UserConfig {
 
 const DEFAULT_CONFIG: UserConfig = { language: "en", advancedMode: false }
 
+let saveQueue: Promise<void> = Promise.resolve()
+
 export function configFilePath(): string {
   const configHome = Bun.env.XDG_CONFIG_HOME || join(Bun.env.HOME || ".", ".config")
   return join(configHome, "proxytop", "config.json")
@@ -36,10 +38,15 @@ export async function loadConfig(): Promise<UserConfig> {
   }
 }
 
-export async function saveConfig(config: UserConfig): Promise<void> {
+export function saveConfig(config: UserConfig): Promise<void> {
   const path = configFilePath()
-  await mkdir(dirname(path), { recursive: true })
-  const temporaryPath = `${path}.${process.pid}.tmp`
-  await Bun.write(temporaryPath, `${JSON.stringify(config, null, 2)}\n`)
-  await rename(temporaryPath, path)
+  const contents = `${JSON.stringify(config, null, 2)}\n`
+  const pending = saveQueue.then(async () => {
+    await mkdir(dirname(path), { recursive: true })
+    const temporaryPath = `${path}.${process.pid}.tmp`
+    await Bun.write(temporaryPath, contents)
+    await rename(temporaryPath, path)
+  })
+  saveQueue = pending.catch(() => undefined)
+  return pending
 }

@@ -40,37 +40,62 @@ final class AppModel: ObservableObject {
     let pipe = Pipe()
     proc.standardOutput = pipe
     proc.standardError = FileHandle.nullDevice
+    proc.terminationHandler = { [weak self] terminatedProcess in
+      Task { @MainActor [weak self] in
+        self?.resetEngineState(
+          expectedProcess: terminatedProcess,
+          error: "engine exited with status \(terminatedProcess.terminationStatus)"
+        )
+      }
+    }
+    process = proc
     do {
       try proc.run()
     } catch {
-      lastError = "failed to launch engine: \(error.localizedDescription)"
+      proc.terminationHandler = nil
+      resetEngineState(
+        expectedProcess: proc,
+        error: "failed to launch engine: \(error.localizedDescription)"
+      )
       return
     }
-    process = proc
 
-    Task {
+    pollTask = Task { [weak self] in
+      guard let self else { return }
       do {
         let banner = try await Self.readBanner(pipe: pipe)
-        socketPath = banner.socket
-        token = banner.token
-        connected = true
-        lastError = nil
-        await runPolling()
+        guard !Task.isCancelled, self.process === proc else { return }
+        self.socketPath = banner.socket
+        self.token = banner.token
+        self.connected = true
+        self.lastError = nil
+        await self.runPolling(expectedProcess: proc)
       } catch {
-        lastError = error.localizedDescription
-        connected = false
+        guard !Task.isCancelled, self.process === proc else { return }
+        self.connected = false
+        self.snapshot = nil
+        self.lastError = error.localizedDescription
       }
     }
   }
 
   func stop() {
+    let proc = process
+    proc?.terminationHandler = nil
+    resetEngineState(expectedProcess: proc)
+    proc?.terminate()
+  }
+
+  private func resetEngineState(expectedProcess: Process? = nil, error: String? = nil) {
+    if let expectedProcess, process !== expectedProcess { return }
     pollTask?.cancel()
     pollTask = nil
-    process?.terminate()
     process = nil
     socketPath = nil
     token = nil
     connected = false
+    snapshot = nil
+    lastError = error
   }
 
   var sortedApps: [SerializedApp] {
@@ -326,15 +351,21 @@ final class AppModel: ObservableObject {
     saveConfig()
   }
 
-  private func runPolling() async {
-    while !Task.isCancelled {
+  private func runPolling(expectedProcess: Process) async {
+    while !Task.isCancelled, process === expectedProcess {
       if let socketPath, let token {
         do {
           let data = try await UnixHTTPClient(socketPath: socketPath, token: token).get(path: "/snapshot")
-          snapshot = try JSONDecoder().decode(DaemonSnapshot.self, from: data)
+          let nextSnapshot = try JSONDecoder().decode(DaemonSnapshot.self, from: data)
+          guard !Task.isCancelled, process === expectedProcess else { return }
+          snapshot = nextSnapshot
+          connected = true
           lastError = nil
           refreshSelection()
         } catch {
+          guard !Task.isCancelled, process === expectedProcess else { return }
+          connected = false
+          snapshot = nil
           lastError = error.localizedDescription
         }
       }

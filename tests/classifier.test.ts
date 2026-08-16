@@ -259,6 +259,23 @@ describe("flow classifier", () => {
     expect(classifyFlow(flow({ interfaceName: "en0" }), context).path).toBe("DIRECT")
   })
 
+  test("classifies CGNAT and IPv6 ULA destinations as LAN", () => {
+    for (const [host, family] of [
+      ["100.64.1.2", 4],
+      ["fd00::1", 6],
+    ] as const) {
+      const result = classifyFlow(
+        flow({
+          family,
+          remote: { raw: family === 6 ? `[${host}]:443` : `${host}:443`, host, port: 443 },
+          interfaceName: "en0",
+        }),
+        context,
+      )
+      expect(result.path).toBe("LAN")
+    }
+  })
+
   test("recognizes a ZeroTier interface before private-address LAN classification", () => {
     const overlaySnapshot: NetworkSnapshot = {
       ...snapshot,

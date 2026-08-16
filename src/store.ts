@@ -1,4 +1,5 @@
 import { classifyFlow, discoverProxyEngines } from "./classifier"
+import { isLocalDestination } from "./network-address"
 import type {
   AppSummary,
   AppVerdict,
@@ -13,7 +14,6 @@ import type {
   ProxyControllerSnapshot,
   ProxyEngineInfo,
 } from "./domain"
-import { isIP } from "node:net"
 import type { RouteLookup } from "./route-lookup"
 
 const PATH_PRIORITY: PathKind[] = [
@@ -203,7 +203,7 @@ export class FlowStore {
         interfaces.add(flow.interfaceName)
         proxyOutboundInterfaces.set(flow.process, interfaces)
       }
-      if (flow.remote.host !== "*" && !this.isLocalAddress(flow.remote.host)) {
+      if (flow.remote.host !== "*" && !isLocalDestination(flow.remote.host)) {
         const region = this.publicRegion(flow.remote.host)
         if (region) {
           const regions = proxyOuterRegions.get(flow.process) ?? new Set<string>()
@@ -323,7 +323,7 @@ export class FlowStore {
             app.nodeRegions.add(region)
           }
         }
-      } else if (!controllerConnection && flow.remote.host !== "*" && !this.isLocalAddress(flow.remote.host)) {
+      } else if (!controllerConnection && flow.remote.host !== "*" && !isLocalDestination(flow.remote.host)) {
         if (flow.path !== "PROXY_OUTBOUND") {
           app.destinations.add(flow.remote.host)
           const region = this.publicRegion(flow.remote.host)
@@ -528,25 +528,9 @@ export class FlowStore {
   }
 
   private publicRegion(host: string): string | undefined {
-    return this.isLocalAddress(host) ? undefined : this.regionLookup(host)
+    return isLocalDestination(host) ? undefined : this.regionLookup(host)
   }
 
-  private isLocalAddress(host: string): boolean {
-    if (isIP(host) === 0) return false
-    return (
-      host === "127.0.0.1" ||
-      host === "::1" ||
-      /^10\./.test(host) ||
-      /^192\.168\./.test(host) ||
-      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-      /^169\.254\./.test(host) ||
-      /^198\.(18|19)\./.test(host) ||
-      /^::ffff:0:c6(?:12|13):/i.test(host) ||
-      /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host) ||
-      /^fe80:/i.test(host) ||
-      /^f[cd][0-9a-f]{2}:/i.test(host)
-    )
-  }
 
   private matchControllerConnection(
     flow: FlowSample,
