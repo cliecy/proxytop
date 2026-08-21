@@ -24,7 +24,7 @@ Usage:
   proxytop daemon [--privileged]
 
 Options:
-  --privileged  Enable Apple pktap metadata capture through a scoped sudo tcpdump process
+  --privileged  Enable diagnostic Apple pktap metadata counting; does not affect path verdicts
   -h, --help    Show this help`)
 }
 

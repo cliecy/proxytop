@@ -125,6 +125,7 @@ function verdictColor(verdict: AppSummary["verdict"]): string {
   const colors: Record<AppSummary["verdict"], string> = {
     PROXIED: COLOR.green,
     DIRECT: COLOR.red,
+    BYPASSED: COLOR.orange,
     MIXED: COLOR.amber,
     OVERLAY: COLOR.purple,
     ENGINE: COLOR.cyan,
@@ -235,6 +236,7 @@ function verdictLabel(app: AppSummary, language: Language): string {
   const labels: Record<AppSummary["verdict"], [string, string]> = {
     PROXIED: ["PROXIED", "代理"],
     DIRECT: ["DIRECT", "直连"],
+    BYPASSED: ["BYPASS", "绕过"],
     MIXED: ["MIXED!", "混合"],
     OVERLAY: ["OVERLAY", "覆盖"],
     ENGINE: ["ENGINE", "引擎"],
@@ -282,7 +284,7 @@ function appExit(app: AppSummary, language: Language): string {
     app.verdict === "PROXIED" ||
     app.verdict === "ENGINE" ||
     app.paths.includes("TUNNELED") ||
-    app.proxyHops.length > 0
+    (app.verdict !== "BYPASSED" && app.proxyHops.length > 0)
   // Prefer VPN/proxy node country over target country for proxied paths.
   if (proxiedLike) {
     if (app.nodeRegions.length) {
@@ -297,11 +299,12 @@ function appExit(app: AppSummary, language: Language): string {
 function coverageSummary(apps: AppSummary[], language: Language): string {
   const proxied = apps.filter((app) => app.verdict === "PROXIED").length
   const direct = apps.filter((app) => app.verdict === "DIRECT").length
+  const bypassed = apps.filter((app) => app.verdict === "BYPASSED").length
   const mixed = apps.filter((app) => app.verdict === "MIXED").length
   return text(
     language,
-    `${proxied} proxied · ${direct} direct · ${mixed} mixed`,
-    `${proxied} 代理 · ${direct} 直连 · ${mixed} 混合`,
+    `${proxied} proxied · ${direct} direct · ${bypassed} bypassed · ${mixed} mixed`,
+    `${proxied} 代理 · ${direct} 直连 · ${bypassed} 绕过 · ${mixed} 混合`,
   )
 }
 
@@ -309,11 +312,12 @@ function sortApps(apps: AppSummary[], sort: UiState["sort"]): AppSummary[] {
   const verdictPriority: Record<AppSummary["verdict"], number> = {
     MIXED: 0,
     DIRECT: 1,
-    UNKNOWN: 2,
-    PROXIED: 3,
-    OVERLAY: 4,
-    ENGINE: 5,
-    LOCAL: 6,
+    BYPASSED: 2,
+    UNKNOWN: 3,
+    PROXIED: 4,
+    OVERLAY: 5,
+    ENGINE: 6,
+    LOCAL: 7,
   }
   return apps.sort((left, right) => {
     if (sort === "process") return left.process.localeCompare(right.process)
@@ -587,9 +591,11 @@ export class Dashboard {
     const engines = this.store.engines()
     const coverage = coverageSummary(allApps, this.state.language)
     const directNames = allApps.filter((app) => app.verdict === "DIRECT").map((app) => app.process)
+    const bypassedNames = allApps.filter((app) => app.verdict === "BYPASSED").map((app) => app.process)
     const mixedNames = allApps.filter((app) => app.verdict === "MIXED").map((app) => app.process)
-    const attention = [...mixedNames, ...directNames].slice(0, 8).join(", ") || text(this.state.language, "none", "无")
-    const coverageColor = directNames.length > 0 || mixedNames.length > 0 ? COLOR.amber : COLOR.green
+    const directAttention = [...mixedNames, ...directNames].slice(0, 8).join(", ") || text(this.state.language, "none", "无")
+    const bypassAttention = bypassedNames.slice(0, 8).join(", ") || text(this.state.language, "none", "无")
+    const coverageColor = directNames.length > 0 || mixedNames.length > 0 ? COLOR.red : bypassedNames.length > 0 ? COLOR.orange : COLOR.green
     const engineLine = engineSummaryLine(engines, this.state.language)
 
     const statusLines: TextChunk[][] = [
@@ -613,8 +619,13 @@ export class Dashboard {
       labeledLine(text(this.state.language, "Coverage", "覆盖"), fit(coverage, statusValueWidth).trimEnd(), coverageColor),
       labeledLine(
         text(this.state.language, "Not proxied", "未走代理"),
-        fit(attention, statusValueWidth).trimEnd(),
+        fit(directAttention, statusValueWidth).trimEnd(),
         directNames.length || mixedNames.length ? COLOR.red : COLOR.muted,
+      ),
+      labeledLine(
+        text(this.state.language, "Controller bypass", "控制器绕过"),
+        fit(bypassAttention, statusValueWidth).trimEnd(),
+        bypassedNames.length ? COLOR.orange : COLOR.muted,
       ),
       labeledLine(text(this.state.language, "WAN", "WAN"), [
         styled("↓ ", COLOR.cyan, { bold: true }),
@@ -681,7 +692,7 @@ export class Dashboard {
     if (!this.state.advanced) {
       // Keep DIRECT/MIXED always (leak attention); drop idle LAN/unknown noise.
       apps = apps.filter((app) => {
-        if (app.verdict === "DIRECT" || app.verdict === "MIXED" || app.verdict === "PROXIED") return true
+        if (app.verdict === "DIRECT" || app.verdict === "BYPASSED" || app.verdict === "MIXED" || app.verdict === "PROXIED") return true
         if (app.verdict === "ENGINE" || app.verdict === "OVERLAY") return true
         if (app.verdict === "LOCAL") return false
         if (app.verdict === "UNKNOWN" && app.rateIn + app.rateOut <= 0) return false
@@ -827,16 +838,18 @@ export class Dashboard {
           text(this.state.language, "Hint", "提示"),
           app.verdict === "DIRECT" || app.verdict === "MIXED"
             ? text(this.state.language, "Not fully proxied — configure app/system/VPN proxy if needed.", "未完全走代理 — 如需代理请配置应用/系统/VPN。")
+            : app.verdict === "BYPASSED"
+              ? text(this.state.language, "The matched controller rule explicitly selected DIRECT.", "匹配的控制器规则明确选择了 DIRECT。")
             : app.verdict === "PROXIED"
               ? text(this.state.language, "Traffic is going through a local proxy or VPN.", "流量正经过本地代理或 VPN。")
               : text(this.state.language, "See advanced mode for full evidence.", "高级模式可看完整证据。"),
-          app.verdict === "DIRECT" || app.verdict === "MIXED" ? COLOR.amber : COLOR.muted,
+          app.verdict === "DIRECT" || app.verdict === "MIXED" ? COLOR.amber : app.verdict === "BYPASSED" ? COLOR.orange : COLOR.muted,
         ),
         labeledLine(text(this.state.language, "Keys", "快捷键"), this.keyHint(), COLOR.muted),
       ])
     }
 
-    const hiddenDestination = app.proxyHops.length > 0 && app.destinations.length === 0
+    const hiddenDestination = app.verdict !== "BYPASSED" && app.proxyHops.length > 0 && app.destinations.length === 0
     const targetCountry = app.regions.join(", ") || (hiddenDestination || app.paths.includes("TUNNELED")
       ? text(this.state.language, "hidden behind proxy/VPN", "被代理/VPN 隐藏")
       : "—")
@@ -1042,6 +1055,7 @@ export class Dashboard {
       ? " 4 诊断：配置、DNS 和不确定性 "
       : " 4 Diagnostics: configuration, DNS, and uncertainty "
     const direct = apps.filter((app) => app.verdict === "DIRECT").map((app) => app.process)
+    const bypassed = apps.filter((app) => app.verdict === "BYPASSED").map((app) => app.process)
     const mixed = apps.filter((app) => app.verdict === "MIXED").map((app) => app.process)
     const unknown = apps.filter((app) => app.verdict === "UNKNOWN").map((app) => app.process)
     const controller = this.store.getControllerSnapshot()
@@ -1053,6 +1067,7 @@ export class Dashboard {
        labeledLine("ZeroTier", snapshot.overlayNetworks.map((item) => `${item.name}[${item.id}]/${item.interfaceName}/${item.status}`).join(", ") || text(this.state.language, "none", "无"), COLOR.indigo),
        labeledLine(text(this.state.language, "DNS resolvers", "DNS 解析器"), snapshot.dnsResolvers.map((item) => `${item.servers.join("+")}@${item.interfaceName || text(this.state.language, "global", "全局")}${item.scoped ? text(this.state.language, " scoped", " 作用域") : ""}`).join(" | ") || text(this.state.language, "unknown", "未知"), COLOR.cyan),
        labeledLine(text(this.state.language, "DIRECT apps", "直连应用"), direct.join(", ") || text(this.state.language, "none observed", "未观测到"), direct.length ? COLOR.red : COLOR.muted),
+       labeledLine(text(this.state.language, "BYPASSED apps", "控制器绕过应用"), bypassed.join(", ") || text(this.state.language, "none observed", "未观测到"), bypassed.length ? COLOR.orange : COLOR.muted),
        labeledLine(text(this.state.language, "MIXED apps", "混合应用"), mixed.join(", ") || text(this.state.language, "none observed", "未观测到"), mixed.length ? COLOR.amber : COLOR.muted),
        labeledLine(text(this.state.language, "UNKNOWN apps", "未知应用"), unknown.join(", ") || text(this.state.language, "none observed", "未观测到"), COLOR.muted),
        labeledLine(text(this.state.language, "Collector errors", "采集器错误"), snapshot.errors.join(" | ") || text(this.state.language, "none", "无"), snapshot.errors.length ? COLOR.red : COLOR.green),
@@ -1063,7 +1078,8 @@ export class Dashboard {
     this.detailText.content = styledLines([
        labeledLine("PROXIED", text(this.state.language, "Observed local proxy hop or an attributed active VPN interface.", "观测到本地代理跳转或已归属的活动 VPN 接口。"), COLOR.green),
        labeledLine("DIRECT", text(this.state.language, "Physical-interface connection with no observed local proxy hop.", "通过物理接口连接，未观测到本地代理跳转。"), COLOR.red),
-       labeledLine("MIXED", text(this.state.language, "The same application has both proxied and direct flows; inspect it.", "同一应用同时存在代理和直连流量；请进一步检查。"), COLOR.amber),
+       labeledLine("BYPASSED", text(this.state.language, "A matched controller decision selected DIRECT.", "匹配的控制器决策选择了 DIRECT。"), COLOR.orange),
+       labeledLine("MIXED", text(this.state.language, "The same application has multiple independent route types; inspect it.", "同一应用存在多种独立路线；请进一步检查。"), COLOR.amber),
        labeledLine(text(this.state.language, "Local proxies", "本地代理"), text(this.state.language, "Targets and selected nodes stay hidden unless a compatible controller provides the join.", "除非兼容的控制器提供关联信息，否则目标和节点会保持隐藏。"), COLOR.indigo),
        labeledLine("Shadowrocket", text(this.state.language, "No equivalent stable public Controller API is available for exact rule/node chains.", "没有等价且稳定的公开控制器 API 可提供精确规则/节点链。"), COLOR.purple),
        labeledLine(text(this.state.language, "Geo data", "地理数据"), text(this.state.language, "Country labels indicate IP allocation and may not equal physical location.", "国家标签表示 IP 分配地，不一定是实际物理位置。"), COLOR.cyan),
@@ -1085,14 +1101,16 @@ export class Dashboard {
       ? [
           ["代理", "应用走了本地代理或已识别的 VPN/TUN。", COLOR.green],
           ["直连", "应用经物理网卡出去，未看到本地代理跳。", COLOR.red],
-          ["混合", "同一应用同时有代理和直连，值得留意。", COLOR.amber],
+          ["绕过", "匹配的控制器规则选择了 DIRECT。", COLOR.orange],
+          ["混合", "同一应用存在多种独立路线，值得留意。", COLOR.amber],
           ["经由", "本地代理进程、VPN 服务或网卡接口。", COLOR.cyan],
           ["出口", "目标 IP 分配国家；被代理藏住时显示「隐藏」。", COLOR.amber],
         ] as Array<[string, string, string]>
       : [
           ["Proxied", "App used a local proxy or attributed VPN/TUN path.", COLOR.green],
           ["Direct", "App used a physical interface with no local proxy hop.", COLOR.red],
-          ["Mixed", "Same app has both proxied and direct flows.", COLOR.amber],
+          ["Bypassed", "A matched controller rule selected DIRECT.", COLOR.orange],
+          ["Mixed", "The same app has multiple independent route types.", COLOR.amber],
           ["Via", "Local proxy process, VPN service, or interface.", COLOR.cyan],
           ["Exit", "Destination IP country; hidden when behind proxy/VPN.", COLOR.amber],
         ] as Array<[string, string, string]>
@@ -1100,7 +1118,8 @@ export class Dashboard {
       ? [
           ["PROXIED", "观察到应用连接了本地代理，或使用了已识别的 VPN/TUN 路径。", COLOR.green],
           ["DIRECT", "应用通过物理网卡直连，未观察到本地代理跳转。", COLOR.red],
-          ["MIXED", "同一个应用同时出现代理连接和直连连接。", COLOR.amber],
+          ["BYPASSED", "匹配的控制器规则选择了 DIRECT。", COLOR.orange],
+          ["MIXED", "同一个应用存在多种独立路线。", COLOR.amber],
           ["OVERLAY", "流量经过 ZeroTier 等覆盖网络接口。", COLOR.purple],
           ["ENGINE", "这是代理引擎本身的外层连接，不一定代表某个应用的最终连接。", COLOR.cyan],
           ["UNKNOWN", "证据不足，程序不会猜测流量最终走向。", COLOR.muted],
@@ -1112,7 +1131,8 @@ export class Dashboard {
       : [
           ["PROXIED", "A local proxy hop or an attributed VPN/TUN path was observed.", COLOR.green],
           ["DIRECT", "The application uses a physical interface without an observed local proxy hop.", COLOR.red],
-          ["MIXED", "The same application has both proxied and direct connections.", COLOR.amber],
+          ["BYPASSED", "A matched controller rule selected DIRECT.", COLOR.orange],
+          ["MIXED", "The same application has multiple independent route types.", COLOR.amber],
           ["OVERLAY", "Traffic uses an overlay interface such as ZeroTier.", COLOR.purple],
           ["ENGINE", "This is an outer connection from the proxy engine itself.", COLOR.cyan],
           ["UNKNOWN", "Evidence is insufficient; proxytop does not guess the route.", COLOR.muted],

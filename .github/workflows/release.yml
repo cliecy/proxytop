@@ -80,6 +80,9 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
+      - name: Test Swift menu bar shell
+        run: swift test
+        working-directory: app
       - name: Import Developer ID certificate
         env:
           CERT_B64: ${{ secrets.PROXYTOP_CERT_B64 }}

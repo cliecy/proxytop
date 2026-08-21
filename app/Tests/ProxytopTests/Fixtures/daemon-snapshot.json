@@ -1,0 +1,79 @@
+{
+  "kind": "snapshot",
+  "collectedAt": 1730000000000,
+  "wanRate": { "in": 0, "out": 0 },
+  "totals": { "in": 0, "out": 0 },
+  "history": { "inbound": [], "outbound": [] },
+  "apps": [
+    {
+      "process": "BypassApp",
+      "pids": [42],
+      "verdict": "BYPASSED",
+      "paths": ["BYPASSED"],
+      "mechanism": "controller → DIRECT rule=MATCH",
+      "control": "controller",
+      "connections": 1,
+      "rateIn": 0,
+      "rateOut": 0,
+      "proxyHops": ["Clash controller -> DIRECT"],
+      "proxyProtocols": ["Clash/TCP"],
+      "interfaces": ["en0"],
+      "tunnelOwners": [],
+      "transports": ["TCP4"],
+      "destinations": ["example.com"],
+      "regions": ["US"],
+      "nodeRegions": [],
+      "rules": ["MATCH"],
+      "proxyChains": ["DIRECT"],
+      "confidence": "HIGH"
+    }
+  ],
+  "engines": [],
+  "statuses": {
+    "nettop": "active",
+    "pktap": "off",
+    "clash": "active",
+    "snapshot": "degraded (2 errors)",
+    "geo": "offline country DB ready"
+  },
+  "header": {
+    "collectedAt": 1000,
+    "proxy": {
+      "httpEnabled": false,
+      "httpsEnabled": false,
+      "socksEnabled": false,
+      "pacEnabled": false,
+      "exceptions": []
+    },
+    "defaultInterface": "en0",
+    "physicalInterfaces": ["en0"],
+    "vpnServices": [],
+    "interfaces": [
+      {
+        "name": "en0",
+        "kind": "physical",
+        "status": "active",
+        "owner": "Wi-Fi",
+        "isDefault": true,
+        "carriesDns": true
+      }
+    ],
+    "controllerConnections": [
+      {
+        "id": "direct",
+        "process": "BypassApp",
+        "sourceIp": "192.168.1.2",
+        "sourcePort": 50000,
+        "destinationIp": "8.8.8.8",
+        "destinationPort": 443,
+        "host": "example.com",
+        "network": "tcp",
+        "rule": "MATCH",
+        "chains": [],
+        "upload": 0,
+        "download": 0
+      }
+    ]
+  },
+  "errors": ["lsof: test failure", "route: test failure"]
+}

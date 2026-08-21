@@ -18,7 +18,13 @@ function isLookupableHost(host: string): boolean {
   return isIP(host) !== 0 && !isLocalDestination(host)
 }
 
-export class RouteLookup {
+export interface RouteLookupService {
+  getCached(host: string): string | undefined
+  request(host: string): void
+  stop(): void
+}
+
+export class RouteLookup implements RouteLookupService {
   private cache = new Map<string, { interfaceName?: string; at: number }>()
   private inflight = new Set<string>()
   private queue: string[] = []
@@ -74,10 +80,11 @@ export class RouteLookup {
     try {
       const result = await runCommand("/sbin/route", ["-n", "get", host], 2_000)
       const parsed = result.exitCode === 0 ? parseRouteGet(result.stdout) : {}
+      if (this.stopped) return
       this.cache.set(host, { interfaceName: parsed.interfaceName, at: Date.now() })
       if (parsed.interfaceName) this.onResolved(host, parsed.interfaceName)
     } catch {
-      this.cache.set(host, { interfaceName: undefined, at: Date.now() })
+      if (!this.stopped) this.cache.set(host, { interfaceName: undefined, at: Date.now() })
     }
   }
 }

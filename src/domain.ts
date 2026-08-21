@@ -143,7 +143,7 @@ export interface ProcessAggregate {
   bytesOut: number
 }
 
-export type AppVerdict = "PROXIED" | "DIRECT" | "MIXED" | "OVERLAY" | "ENGINE" | "LOCAL" | "UNKNOWN"
+export type AppVerdict = "PROXIED" | "DIRECT" | "BYPASSED" | "MIXED" | "OVERLAY" | "ENGINE" | "LOCAL" | "UNKNOWN"
 
 /** How this app's traffic is controlled (human-readable). */
 export type ControlMechanism =

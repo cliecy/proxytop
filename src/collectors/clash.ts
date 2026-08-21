@@ -165,6 +165,7 @@ async function requestJsonDirect(
 
 export class ClashCollector {
   private stopped = false
+  private started = false
   private controller?: AbortController
 
   constructor(
@@ -176,11 +177,13 @@ export class ClashCollector {
   ) {}
 
   start(): void {
-    this.stopped = false
+    if (this.started || this.stopped) return
+    this.started = true
     void this.runLoop()
   }
 
   stop(): void {
+    if (this.stopped) return
     this.stopped = true
     this.controller?.abort()
   }
@@ -201,6 +204,7 @@ export class ClashCollector {
           this.secret,
           this.controller.signal,
         )
+        if (this.stopped) break
         if (response.status < 200 || response.status >= 300) {
           this.onSnapshot(undefined)
           this.onStatus(response.status === 401 ? "authentication required" : `HTTP ${response.status}`)

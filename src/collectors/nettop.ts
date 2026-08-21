@@ -5,6 +5,7 @@ export class NettopCollector {
   private child?: Bun.Subprocess
   private terminal?: Bun.Terminal
   private stopped = false
+  private started = false
 
   constructor(
     private readonly onSample: (sample: FlowSample) => void,
@@ -12,11 +13,13 @@ export class NettopCollector {
   ) {}
 
   start(): void {
-    this.stopped = false
+    if (this.started || this.stopped) return
+    this.started = true
     void this.runLoop()
   }
 
   stop(): void {
+    if (this.stopped) return
     this.stopped = true
     this.child?.kill("SIGTERM")
   }
@@ -32,13 +35,14 @@ export class NettopCollector {
         cols: 240,
         rows: 80,
         data: (_terminal, data) => {
+          if (this.stopped) return
           lastOutputAt = Date.now()
           pending += decoder.decode(data, { stream: true })
           const lines = pending.split(/\r?\n/)
           pending = lines.pop() ?? ""
           for (const line of lines) {
             const sample = parser.parse(line)
-            if (sample) this.onSample(sample)
+            if (sample && !this.stopped) this.onSample(sample)
           }
         },
       })

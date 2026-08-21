@@ -24,6 +24,9 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Test Swift menu bar shell
+        run: swift test
+        working-directory: app
       - name: Compile Swift menu bar shell
         run: swift build -c release
         working-directory: app

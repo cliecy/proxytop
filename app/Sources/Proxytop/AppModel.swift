@@ -21,6 +21,9 @@ final class AppModel: ObservableObject {
   private var socketPath: String?
   private var token: String?
   private var pollTask: Task<Void, Never>?
+  private var bannerReader: BannerReader?
+  private var stderrTail: StderrTail?
+  private var lifecycleID = UUID()
 
   private init() {}
 
@@ -34,36 +37,40 @@ final class AppModel: ObservableObject {
     launchAtLogin = isLaunchAtLoginEnabled
     loadConfig()
 
+    lifecycleID = UUID()
     let proc = Process()
     proc.executableURL = engine
     proc.arguments = ["daemon", "--supervised"]
     let pipe = Pipe()
+    let errorPipe = Pipe()
+    let tail = StderrTail(handle: errorPipe.fileHandleForReading)
     proc.standardOutput = pipe
-    proc.standardError = FileHandle.nullDevice
+    proc.standardError = errorPipe
+    stderrTail = tail
+    tail.start()
     proc.terminationHandler = { [weak self] terminatedProcess in
-      Task { @MainActor [weak self] in
-        self?.resetEngineState(
-          expectedProcess: terminatedProcess,
-          error: "engine exited with status \(terminatedProcess.terminationStatus)"
-        )
-      }
+      Task { @MainActor [weak self] in self?.handleProcessExit(terminatedProcess) }
     }
     process = proc
     do {
       try proc.run()
+      try? pipe.fileHandleForWriting.close()
+      try? errorPipe.fileHandleForWriting.close()
     } catch {
+      try? pipe.fileHandleForWriting.close()
+      try? errorPipe.fileHandleForWriting.close()
       proc.terminationHandler = nil
-      resetEngineState(
-        expectedProcess: proc,
-        error: "failed to launch engine: \(error.localizedDescription)"
-      )
+      cleanUp(expectedProcess: proc, error: "failed to launch engine: \(error.localizedDescription)", alreadyExited: true)
       return
     }
 
     pollTask = Task { [weak self] in
       guard let self else { return }
       do {
-        let banner = try await Self.readBanner(pipe: pipe)
+        let reader = BannerReader(handle: pipe.fileHandleForReading)
+        self.bannerReader = reader
+        let banner = try await reader.read()
+        self.bannerReader = nil
         guard !Task.isCancelled, self.process === proc else { return }
         self.socketPath = banner.socket
         self.token = banner.token
@@ -72,37 +79,61 @@ final class AppModel: ObservableObject {
         await self.runPolling(expectedProcess: proc)
       } catch {
         guard !Task.isCancelled, self.process === proc else { return }
-        self.connected = false
-        self.snapshot = nil
-        self.lastError = error.localizedDescription
+        self.failAndCleanUp(expectedProcess: proc, error: error.localizedDescription)
       }
     }
   }
 
   func stop() {
-    let proc = process
-    proc?.terminationHandler = nil
-    resetEngineState(expectedProcess: proc)
-    proc?.terminate()
+    guard let proc = process else { return }
+    cleanUp(expectedProcess: proc, error: nil)
   }
 
-  private func resetEngineState(expectedProcess: Process? = nil, error: String? = nil) {
-    if let expectedProcess, process !== expectedProcess { return }
+  private func failAndCleanUp(expectedProcess: Process, error: String) {
+    cleanUp(expectedProcess: expectedProcess, error: error)
+  }
+
+  private func handleProcessExit(_ terminatedProcess: Process) {
+    guard process === terminatedProcess else { return }
+    cleanUp(expectedProcess: terminatedProcess, error: "engine exited with status \(terminatedProcess.terminationStatus)", alreadyExited: true)
+  }
+
+  private func cleanUp(expectedProcess: Process, error: String?, alreadyExited: Bool = false) {
+    guard process === expectedProcess else { return }
     pollTask?.cancel()
     pollTask = nil
+    bannerReader?.cancel()
+    bannerReader = nil
+    expectedProcess.terminationHandler = nil
+    let tail = stderrTail
+    let cleanupID = lifecycleID
+    stderrTail = nil
     process = nil
     socketPath = nil
     token = nil
     connected = false
     snapshot = nil
-    lastError = error
+
+    Task.detached {
+      if !alreadyExited, expectedProcess.isRunning {
+        expectedProcess.terminate()
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        if expectedProcess.isRunning { kill(expectedProcess.processIdentifier, SIGKILL) }
+      }
+      if expectedProcess.isRunning { expectedProcess.waitUntilExit() }
+      let detail = tail?.stop() ?? ""
+      await MainActor.run { [weak self] in
+        guard let self, self.process == nil, self.lifecycleID == cleanupID else { return }
+        self.lastError = error.map { detail.isEmpty ? $0 : "\($0)\n\(detail)" }
+      }
+    }
   }
 
   var sortedApps: [SerializedApp] {
     var apps = snapshot?.apps ?? []
     if !advancedMode {
       apps = apps.filter { app in
-        if app.verdict == "DIRECT" || app.verdict == "MIXED" || app.verdict == "PROXIED" { return true }
+        if app.verdict == "DIRECT" || app.verdict == "MIXED" || app.verdict == "BYPASSED" || app.verdict == "PROXIED" { return true }
         if app.verdict == "ENGINE" || app.verdict == "OVERLAY" { return true }
         if app.verdict == "LOCAL" { return false }
         if app.verdict == "UNKNOWN", app.totalRate <= 0 { return false }
@@ -115,11 +146,13 @@ final class AppModel: ObservableObject {
         switch app.verdict {
         case "MIXED": return 0
         case "DIRECT": return 1
-        case "UNKNOWN": return 2
-        case "PROXIED": return 3
-        case "OVERLAY": return 4
-        case "ENGINE": return 5
-        default: return 6
+        case "BYPASSED": return 2
+        case "UNKNOWN": return 3
+        case "PROXIED": return 4
+        case "OVERLAY": return 5
+        case "ENGINE": return 6
+        case "LOCAL": return 7
+        default: return 8
         }
       }
       let leftRank = rank(left)
@@ -138,11 +171,12 @@ final class AppModel: ObservableObject {
     advancedMode ? AppSection.allCases : [.apps, .settings]
   }
 
-  var coverageSummary: (proxied: Int, direct: Int, mixed: Int) {
+  var coverageSummary: (proxied: Int, direct: Int, bypassed: Int, mixed: Int) {
     let apps = snapshot?.apps ?? []
     return (
       apps.filter { $0.verdict == "PROXIED" }.count,
       apps.filter { $0.verdict == "DIRECT" }.count,
+      apps.filter { $0.verdict == "BYPASSED" }.count,
       apps.filter { $0.verdict == "MIXED" }.count
     )
   }
@@ -370,38 +404,6 @@ final class AppModel: ObservableObject {
         }
       }
       try? await Task.sleep(nanoseconds: 1_000_000_000)
-    }
-  }
-
-  private static func readBanner(pipe: Pipe) async throws -> (socket: String, token: String) {
-    try await withCheckedThrowingContinuation { continuation in
-      DispatchQueue.global(qos: .userInitiated).async {
-        let handle = pipe.fileHandleForReading
-        var buffer = Data()
-        var socket: String?
-        var token: String?
-        let socketPrefix = "PROXYTOP_SOCKET="
-        let tokenPrefix = "PROXYTOP_TOKEN="
-        while socket == nil || token == nil {
-          let chunk = handle.availableData
-          if chunk.isEmpty { break }
-          buffer.append(chunk)
-          let text = String(data: buffer, encoding: .utf8) ?? ""
-          for line in text.split(whereSeparator: \.isNewline) {
-            if socket == nil, line.hasPrefix(socketPrefix) {
-              socket = String(line.dropFirst(socketPrefix.count))
-            }
-            if token == nil, line.hasPrefix(tokenPrefix) {
-              token = String(line.dropFirst(tokenPrefix.count))
-            }
-          }
-        }
-        if let socket, let token {
-          continuation.resume(returning: (socket, token))
-        } else {
-          continuation.resume(throwing: UnixHTTPClient.ClientError.bannerTimeout)
-        }
-      }
     }
   }
 

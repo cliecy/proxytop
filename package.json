@@ -1,6 +1,6 @@
 {
   "name": "proxytop",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "A macOS proxy ownership, VPN, tunnel, and per-application network path inspector",
   "type": "module",
   "license": "MIT",

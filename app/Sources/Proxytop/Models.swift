@@ -145,9 +145,10 @@ struct DaemonSnapshot: Decodable {
   let engines: [SerializedEngine]
   let statuses: Statuses
   let header: Header?
+  let errors: [String]
 
   enum CodingKeys: String, CodingKey {
-    case kind, collectedAt, wanRate, totals, history, apps, engines, statuses, header
+    case kind, collectedAt, wanRate, totals, history, apps, engines, statuses, header, errors
   }
 
   init(from decoder: Decoder) throws {
@@ -161,5 +162,6 @@ struct DaemonSnapshot: Decodable {
     engines = try container.decodeIfPresent([SerializedEngine].self, forKey: .engines) ?? []
     statuses = try container.decode(Statuses.self, forKey: .statuses)
     header = try container.decodeIfPresent(Header.self, forKey: .header)
+    errors = try container.decodeIfPresent([String].self, forKey: .errors) ?? []
   }
 }

@@ -14,7 +14,7 @@ import type {
   ProxyControllerSnapshot,
   ProxyEngineInfo,
 } from "./domain"
-import type { RouteLookup } from "./route-lookup"
+import type { RouteLookupService } from "./route-lookup"
 
 const PATH_PRIORITY: PathKind[] = [
   "BYPASSED",
@@ -44,13 +44,13 @@ export class FlowStore {
   private historyOut: number[] = []
   private regionLookup: (host: string) => string | undefined = () => undefined
   private controllerSnapshot?: ProxyControllerSnapshot
-  private routeLookup?: RouteLookup
+  private routeLookup?: RouteLookupService
 
   setRegionLookup(lookup: (host: string) => string | undefined): void {
     this.regionLookup = lookup
   }
 
-  setRouteLookup(lookup: RouteLookup): void {
+  setRouteLookup(lookup: RouteLookupService): void {
     this.routeLookup = lookup
   }
 
@@ -185,6 +185,7 @@ export class FlowStore {
         confidences: Set<Confidence>
         hasProxied: boolean
         hasDirect: boolean
+        hasBypassed: boolean
         hasOverlay: boolean
         outerRateIn: number
         outerRateOut: number
@@ -251,6 +252,7 @@ export class FlowStore {
         confidences: new Set<Confidence>(),
         hasProxied: false,
         hasDirect: false,
+        hasBypassed: false,
         hasOverlay: false,
         outerRateIn: 0,
         outerRateOut: 0,
@@ -260,7 +262,12 @@ export class FlowStore {
       }
       byProcess.set(flow.process, app)
       app.pids.add(flow.pid)
-      app.paths.add(flow.path)
+      const controllerRoute = controllerConnection
+        ? this.controllerRoute(controllerConnection.chains)
+        : undefined
+      if (controllerRoute === "direct") app.paths.add("BYPASSED")
+      else if (controllerRoute === "proxied") app.paths.add("LOCAL_PROXY")
+      else app.paths.add(flow.path)
       app.confidences.add(flow.confidence)
       app.connections += 1
       app.rateIn += flow.rateIn
@@ -273,12 +280,18 @@ export class FlowStore {
       }
       app.transports.add(`${flow.protocol.toUpperCase()}${flow.family}`)
       if (flow.interfaceName) app.interfaces.add(flow.interfaceName)
-      if (flow.path === "LOCAL_PROXY" || flow.path === "TUNNELED" || controllerConnection) app.hasProxied = true
-      if (flow.path === "DIRECT" && !controllerConnection) app.hasDirect = true
-      if (flow.path === "OVERLAY") app.hasOverlay = true
+      if (controllerRoute === "direct") app.hasBypassed = true
+      else if (controllerRoute === "proxied") app.hasProxied = true
+      else {
+        if (flow.path === "LOCAL_PROXY" || flow.path === "TUNNELED") app.hasProxied = true
+        if (flow.path === "DIRECT") app.hasDirect = true
+        if (flow.path === "OVERLAY") app.hasOverlay = true
+      }
 
       if (controllerConnection) {
-        const chain = controllerConnection.chains.length > 0 ? controllerConnection.chains.join(" -> ") : "DIRECT"
+        const chain = controllerRoute === "direct"
+          ? "DIRECT"
+          : controllerConnection.chains.map((token) => token.trim()).join(" -> ") || "invalid chain"
         app.proxyChains.add(chain)
         app.proxyHops.add(`Clash controller -> ${chain}`)
         app.proxyProtocols.add(
@@ -336,18 +349,21 @@ export class FlowStore {
       const paths = [...app.paths]
       const proxied = app.hasProxied
       const direct = app.hasDirect
+      const bypassed = app.hasBypassed
       const overlay = app.hasOverlay
-      const routeKinds = Number(proxied) + Number(direct) + Number(overlay)
-      const verdict: AppVerdict = paths.includes("PROXY_OUTBOUND") && !proxied && !direct
+      const routeKinds = Number(proxied) + Number(direct) + Number(bypassed) + Number(overlay)
+      const verdict: AppVerdict = paths.includes("PROXY_OUTBOUND") && routeKinds === 0
         ? "ENGINE"
         : routeKinds > 1
           ? "MIXED"
           : proxied
             ? "PROXIED"
-            : overlay
-              ? "OVERLAY"
-            : direct
-              ? "DIRECT"
+            : bypassed
+              ? "BYPASSED"
+              : overlay
+                ? "OVERLAY"
+              : direct
+                ? "DIRECT"
               : paths.every((path) => path === "LAN")
                 ? "LOCAL"
                 : "UNKNOWN"
@@ -447,7 +463,7 @@ export class FlowStore {
     },
   ): { control: ControlMechanism; mechanism: string } {
     if (app.verdict === "MIXED") {
-      return { control: "mixed", mechanism: "mixed: proxy/VPN and direct both observed" }
+      return { control: "mixed", mechanism: "mixed: multiple independent routes observed" }
     }
     if (app.verdict === "ENGINE" || app.paths.includes("PROXY_OUTBOUND")) {
       const iface = app.interfaces.join(", ") || "physical"
@@ -531,6 +547,14 @@ export class FlowStore {
     return isLocalDestination(host) ? undefined : this.regionLookup(host)
   }
 
+
+  private controllerRoute(chains: string[]): "direct" | "proxied" | "invalid" {
+    if (chains.length === 0) return "direct"
+    const tokens = chains.map((token) => token.trim())
+    if (tokens.every((token) => token.length === 0)) return "direct"
+    if (tokens.some((token) => token.length === 0 || /^REJECT/i.test(token))) return "invalid"
+    return tokens.some((token) => token.toUpperCase() === "DIRECT") ? "direct" : "proxied"
+  }
 
   private matchControllerConnection(
     flow: FlowSample,

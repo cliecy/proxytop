@@ -1,3 +1,6 @@
+# typed: strict
+# frozen_string_literal: true
+
 # Reference copy of the Homebrew cask. The published cask is `proxytop-app`
 # in the cliecy/tap tap: https://github.com/cliecy/homebrew-tap
 #   brew tap cliecy/tap
@@ -6,25 +9,25 @@
 # It is named `proxytop-app` to avoid colliding with the `proxytop` formula in
 # the same tap (a formula and cask with the same name break brew's audit).
 #
-# Note: the app is currently unsigned, so the first launch after install is
-# blocked by Gatekeeper. Open once with right-click -> Open, or run:
-#   xattr -dr com.apple.quarantine "/Applications/Proxytop.app"
+# This is a reference copy; the cask published in cliecy/tap is authoritative.
 cask "proxytop-app" do
-  version "1.4.0"
-  sha256 "41fd8b20755dd552fa0545b4bb07167a8e97bfdec4db40f7a9db8e86d7afbd0b"
+  version "1.4.1"
+  sha256 "2e656b9607d604d75713f205c4fae96639fea05e3c827edaed13315a90e13d9a"
 
   url "https://github.com/cliecy/proxytop/releases/download/v#{version}/Proxytop-#{version}.dmg",
       verified: "github.com/cliecy/proxytop/"
   name "Proxytop"
-  desc "macOS proxy, VPN, and per-application network path inspector"
+  desc "Proxy, VPN, and per-application network path inspector"
   homepage "https://github.com/cliecy/proxytop"
+
+  depends_on macos: :sonoma
 
   app "Proxytop.app"
 
   uninstall quit: "com.proxytop.app"
 
   zap trash: [
-    "~/Library/Application Support/Proxytop",
     "~/.config/proxytop",
+    "~/Library/Application Support/Proxytop",
   ]
 end

@@ -34,4 +34,34 @@ describe("nettop parser", () => {
     expect(new Date(flow!.timestamp).getHours()).toBe(22)
     expect(new Date(flow!.timestamp).getMinutes()).toBe(30)
   })
+
+  test("assigns late-night rows to the previous day after midnight", () => {
+    const current = new Date(2026, 0, 2, 0, 0, 1, 0).getTime()
+    const parser = new NettopParser(() => current)
+    parser.parse("time,,interface,state,bytes_in,bytes_out,rtt_avg,")
+    parser.parse("23:59:59.500,Example.10,,,,,,")
+    const flow = parser.parse("23:59:59.500,tcp4 192.0.2.1:50000<->8.8.8.8:443,en0,Established,1,1,,")
+
+    expect(flow?.timestamp).toBe(new Date(2026, 0, 1, 23, 59, 59, 500).getTime())
+  })
+
+  test("chooses the nearest date for an upcoming midnight row", () => {
+    const current = new Date(2026, 0, 1, 23, 59, 59, 0).getTime()
+    const parser = new NettopParser(() => current)
+    parser.parse("time,,interface,state,bytes_in,bytes_out,rtt_avg,")
+    parser.parse("00:00:01.000,Example.10,,,,,,")
+    const flow = parser.parse("00:00:01.000,tcp4 192.0.2.1:50000<->8.8.8.8:443,en0,Established,1,1,,")
+
+    expect(flow?.timestamp).toBe(new Date(2026, 0, 2, 0, 0, 1, 0).getTime())
+  })
+
+  test("falls back to the injected clock for invalid timestamps", () => {
+    const current = new Date(2026, 0, 2, 12, 0, 0, 0).getTime()
+    const parser = new NettopParser(() => current)
+    parser.parse("time,,interface,state,bytes_in,bytes_out,rtt_avg,")
+    parser.parse("99:99:99.0,Example.10,,,,,,")
+    const flow = parser.parse("99:99:99.0,tcp4 192.0.2.1:50000<->8.8.8.8:443,en0,Established,1,1,,")
+
+    expect(flow?.timestamp).toBe(current)
+  })
 })

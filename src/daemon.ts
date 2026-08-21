@@ -90,6 +90,7 @@ export interface DaemonSnapshot {
     geo: string
   }
   header: DaemonHeader | null
+  errors: string[]
 }
 
 export function socketPath(): string {
@@ -207,6 +208,7 @@ export function buildSnapshot(
     engines,
     statuses: { ...engine.statuses, geo: geoStatus },
     header,
+    errors: snapshot?.errors ?? [],
   }
 }
 

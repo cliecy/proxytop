@@ -475,4 +475,136 @@ describe("flow store", () => {
     store.upsert(flow({ process: "opencode.exe", protocol: "tcp" }))
     expect(store.apps()[0]).toMatchObject({ verdict: "DIRECT", proxyChains: [] })
   })
+
+  test("maps empty and explicit case-insensitive controller DIRECT chains to BYPASSED", () => {
+    for (const chains of [[], ["   "], ["DIRECT"], ["  direct  "], ["Proxy", "DiReCt"]]) {
+      const store = new FlowStore()
+      store.setSnapshot(snapshot())
+      store.setControllerSnapshot({
+        kind: "clash",
+        url: "http://127.0.0.1:9090",
+        collectedAt: Date.now(),
+        connections: [{
+          id: "direct",
+          process: "opencode.exe",
+          sourcePort: 50000,
+          network: "tcp",
+          rule: "MATCH",
+          chains,
+          upload: 0,
+          download: 0,
+        }],
+      })
+      store.upsert(flow({ process: "opencode.exe" }))
+      expect(store.apps()[0]).toMatchObject({
+        verdict: "BYPASSED",
+        paths: ["BYPASSED"],
+        control: "controller",
+        proxyChains: ["DIRECT"],
+      })
+    }
+  })
+
+  test("keeps ordinary controller proxy chains PROXIED", () => {
+    const store = new FlowStore()
+    store.setSnapshot(snapshot())
+    store.setControllerSnapshot({
+      kind: "clash",
+      url: "http://127.0.0.1:9090",
+      collectedAt: Date.now(),
+      connections: [{
+        id: "proxy",
+        process: "opencode.exe",
+        sourcePort: 50000,
+        network: "tcp",
+        chains: ["US Auto", "Proxy"],
+        upload: 0,
+        download: 0,
+      }],
+    })
+    store.upsert(flow({ process: "opencode.exe" }))
+    expect(store.apps()[0]).toMatchObject({ verdict: "PROXIED", paths: ["LOCAL_PROXY"] })
+  })
+
+  test("does not let REJECT or malformed controller chains impersonate routed verdicts", () => {
+    for (const chains of [["REJECT"], ["REJECT-DROP"], ["Proxy", "  "]]) {
+      const store = new FlowStore()
+      store.setSnapshot(snapshot())
+      store.setControllerSnapshot({
+        kind: "clash",
+        url: "http://127.0.0.1:9090",
+        collectedAt: Date.now(),
+        connections: [{
+          id: "invalid",
+          process: "opencode.exe",
+          sourcePort: 50000,
+          network: "tcp",
+          rule: "MATCH",
+          chains,
+          upload: 0,
+          download: 0,
+        }],
+      })
+      store.upsert(flow({ process: "opencode.exe" }))
+      expect(store.apps()[0]).toMatchObject({ verdict: "DIRECT", paths: ["DIRECT"], control: "controller" })
+    }
+  })
+
+  test("does not hide a controller bypass behind the ENGINE role", () => {
+    const store = new FlowStore()
+    store.setSnapshot(snapshot())
+    store.setControllerSnapshot({
+      kind: "clash",
+      url: "http://127.0.0.1:9090",
+      collectedAt: Date.now(),
+      connections: [{
+        id: "direct",
+        process: "MacPacketTunnel",
+        sourcePort: 50_000,
+        network: "tcp",
+        chains: [],
+        upload: 0,
+        download: 0,
+      }],
+    })
+    store.upsert(flow({ process: "MacPacketTunnel", pid: 100 }))
+    store.upsert(flow({
+      process: "MacPacketTunnel",
+      pid: 100,
+      local: { raw: "192.168.1.2:50001", host: "192.168.1.2", port: 50_001 },
+      remote: { raw: "1.1.1.1:443", host: "1.1.1.1", port: 443 },
+    }))
+
+    expect(store.apps()[0]).toMatchObject({ verdict: "BYPASSED", paths: ["BYPASSED", "PROXY_OUTBOUND"] })
+  })
+
+  test("does not duplicate one controller-direct flow but mixes an independent route", () => {
+    const store = new FlowStore()
+    store.setSnapshot(snapshot())
+    store.setControllerSnapshot({
+      kind: "clash",
+      url: "http://127.0.0.1:9090",
+      collectedAt: Date.now(),
+      connections: [{
+        id: "direct",
+        process: "opencode.exe",
+        sourcePort: 50000,
+        network: "tcp",
+        chains: [],
+        upload: 0,
+        download: 0,
+      }],
+    })
+    store.upsert(flow({ process: "opencode.exe" }))
+    expect(store.apps()[0]).toMatchObject({ verdict: "BYPASSED", paths: ["BYPASSED"] })
+
+    store.upsert(flow({
+      process: "opencode.exe",
+      local: { raw: "192.168.1.2:50001", host: "192.168.1.2", port: 50001 },
+      remote: { raw: "1.1.1.1:443", host: "1.1.1.1", port: 443 },
+    }))
+    expect(store.apps()[0]).toMatchObject({ verdict: "MIXED", paths: ["BYPASSED", "DIRECT"] })
+    expect(store.apps()[0]?.mechanism).toBe("mixed: multiple independent routes observed")
+  })
+
 })

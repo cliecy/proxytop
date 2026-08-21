@@ -41,7 +41,7 @@ Optional Apple pktap metadata capture:
 proxytop --privileged
 ```
 
-Only the fixed `tcpdump` child process receives elevated privileges. It is launched with sudo's no-timestamp-update mode and drops back to the invoking user after opening the capture interface. It excludes common plaintext DNS ports and limits each in-memory capture to the first 64 bytes. `proxytop` retains only process, PID, interface, direction, and counters; raw packet lines and payloads are not saved to disk. The privileged `tcpdump` process still temporarily sees packet headers and potentially a few application bytes, so use this mode only when needed.
+Only the fixed `tcpdump` child process receives elevated privileges. It is launched with sudo's no-timestamp-update mode and drops back to the invoking user after opening the capture interface. It excludes common plaintext DNS ports and limits each in-memory capture to the first 64 bytes. `proxytop` retains only process, PID, interface, direction, and counters; raw packet lines and payloads are not saved to disk. This is a diagnostic packet counter only: pktap evidence is not joined into `FlowStore` and does not change application path verdicts. The menu bar app does not request sudo or enable this CLI-only diagnostic mode. The privileged `tcpdump` process still temporarily sees packet headers and potentially a few application bytes, so use this mode only when needed.
 
 ## Menu Bar App
 
@@ -150,6 +150,7 @@ The menu bar app mirrors this: Apps is the default signal view; enable **Advance
 - `PROXY`: application connected to a known local proxy listener
 - `TUN`: application traffic uses the active VPN-backed tunnel
 - `DIRECT`: application traffic uses a physical interface without an observed local proxy hop
+- `BYPASS`: a Clash/Mihomo-compatible controller explicitly selected its `DIRECT` path
 - `OUTBOUND`: proxy engine traffic leaving through a physical interface
 - `OVERLAY`: traffic on an attributed overlay such as ZeroTier
 - `LAN`: loopback, private, link-local, or local traffic
@@ -157,9 +158,10 @@ The menu bar app mirrors this: Apps is the default signal view; enable **Advance
 
 Application verdicts:
 
-- `PROXIED`: an explicit local proxy hop or attributed VPN/TUN path was observed
-- `DIRECT`: a physical-interface connection with no local proxy hop was observed
-- `MIXED`: the application currently has more than one route class, such as proxy plus direct
+- `PROXIED`: an explicit local proxy hop, attributed VPN/TUN path, or non-direct controller chain was observed
+- `DIRECT`: a physical-interface connection with no local proxy hop or controller decision was observed
+- `BYPASSED`: a compatible controller captured the connection but explicitly selected `DIRECT`
+- `MIXED`: the application currently has more than one route class, such as proxy plus direct or bypassed traffic
 - `OVERLAY`: the application is using an attributed overlay such as ZeroTier
 - `ENGINE`: the process is a proxy/VPN engine creating outer connections
 - `UNKNOWN`: evidence is insufficient for a reliable claim
@@ -168,12 +170,12 @@ Application verdicts:
 
 The Apps view reports both the verdict and the observed control mechanism. It can identify a system proxy, a local listener, a VPN/TUN interface, an overlay, a proxy-engine outer connection, or a physical/VM bridge direct path. The diagnostics view also lists active proxy engines and why each one was detected: known client name, system-proxy port, common proxy port, VPN service, or local-listener-plus-outbound behavior.
 
-`DIRECT` is intentional evidence: the process used a physical, bridge, or VM egress without an observed local proxy hop. `MIXED` means the same process has both proxied and direct connections and should be investigated. For virtual machines and containers, macOS can identify the host-side VM/bridge connection, but not the individual process inside the guest; configure the guest's proxy when its host-side connection is direct.
+`DIRECT` is intentional evidence: the process used a physical, bridge, or VM egress without an observed local proxy hop or controller decision. `BYPASSED` is different: a Clash/Mihomo-compatible controller observed the connection and explicitly chose its `DIRECT` policy. `MIXED` means the same process has more than one route class and should be investigated. For virtual machines and containers, macOS can identify the host-side VM/bridge connection, but not the individual process inside the guest; configure the guest's proxy when its host-side connection is direct.
 
-The Settings view contains a built-in README for users who are not familiar with networking terminology. It explains verdicts such as `PROXIED`, `DIRECT`, and `MIXED`, path labels such as `PROXY`, `TUN`, and `OVERLAY`, and why some destinations are shown as hidden or unknown. Press `l` there to switch the guide between English and Chinese.
+The Settings view contains a built-in README for users who are not familiar with networking terminology. It explains verdicts such as `PROXIED`, `DIRECT`, `BYPASSED`, and `MIXED`, path labels such as `PROXY`, `TUN`, and `OVERLAY`, and why some destinations are shown as hidden or unknown. Press `l` there to switch the guide between English and Chinese.
 
 The selected language is saved persistently in `~/.config/proxytop/config.json` (or `$XDG_CONFIG_HOME/proxytop/config.json` when `XDG_CONFIG_HOME` is set). Missing or invalid settings default to English.
 
-`DIRECT` does not automatically mean a leak. Some applications and destinations intentionally bypass a proxy. For local HTTP/SOCKS proxies and packet tunnels, macOS does not expose a reliable application-to-final-node join. In those cases proxytop reports the proven local port or TUN owner and marks the final destination/country as hidden instead of guessing. Clash/Mihomo-compatible controller integration would be needed to show exact rule and node chains; Shadowrocket has no equivalent stable public API.
+`DIRECT` does not automatically mean a leak. Some applications and destinations intentionally avoid a proxy. When a Clash/Mihomo-compatible controller explicitly reports a `DIRECT` decision, proxytop labels it `BYPASSED` and shows the exact rule when available. For other local HTTP/SOCKS proxies and packet tunnels, macOS does not expose a reliable application-to-final-node join, so proxytop reports the proven local port or TUN owner and marks the final destination/country as hidden instead of guessing. Shadowrocket has no equivalent stable public Controller API.
 
 The header's `WAN observed` rate counts only physical-interface direct and proxy-engine outer sockets. It intentionally excludes loopback proxy copies and TUN copies to avoid double counting the same traffic.

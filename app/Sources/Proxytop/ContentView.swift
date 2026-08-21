@@ -102,7 +102,11 @@ struct AppsView: View {
   private var coverageBar: some View {
     let coverage = model.coverageSummary
     let engines = model.snapshot?.engines ?? []
-    let directApps = model.sortedApps.filter { $0.verdict == "DIRECT" || $0.verdict == "MIXED" }
+    let directNames = model.sortedApps.filter { $0.verdict == "DIRECT" || $0.verdict == "MIXED" }
+      .prefix(6)
+      .map(\.process)
+      .joined(separator: ", ")
+    let bypassedNames = model.sortedApps.filter { $0.verdict == "BYPASSED" }
       .prefix(6)
       .map(\.process)
       .joined(separator: ", ")
@@ -117,6 +121,11 @@ struct AppsView: View {
           label: localText(model.language, "direct", "直连"),
           value: coverage.direct,
           color: .red
+        )
+        coverageChip(
+          label: localText(model.language, "bypassed", "绕过"),
+          value: coverage.bypassed,
+          color: .orange
         )
         coverageChip(
           label: localText(model.language, "mixed", "混合"),
@@ -140,10 +149,17 @@ struct AppsView: View {
         .foregroundStyle(.secondary)
         .lineLimit(1)
         .truncationMode(.tail)
-      if !directApps.isEmpty {
-        Text("\(localText(model.language, "Not proxied", "未走代理")) · \(directApps)")
+      if !directNames.isEmpty {
+        Text("\(localText(model.language, "Not proxied", "未走代理")) · \(directNames)")
           .font(.system(size: 10, weight: .medium))
           .foregroundStyle(.red)
+          .lineLimit(2)
+          .truncationMode(.tail)
+      }
+      if !bypassedNames.isEmpty {
+        Text("\(localText(model.language, "Controller bypass", "控制器绕过")) · \(bypassedNames)")
+          .font(.system(size: 10, weight: .medium))
+          .foregroundStyle(.orange)
           .lineLimit(2)
           .truncationMode(.tail)
       }
@@ -236,7 +252,7 @@ struct AppRow: View {
       HStack(spacing: 4) {
         Text(appVia(app))
           .font(.system(size: 10))
-          .foregroundStyle(app.verdict == "DIRECT" || app.verdict == "MIXED" ? Color.red.opacity(0.85) : Color.secondary)
+          .foregroundStyle(app.verdict == "DIRECT" || app.verdict == "MIXED" ? Color.red.opacity(0.85) : app.verdict == "BYPASSED" ? Color.orange : Color.secondary)
           .lineLimit(1)
           .truncationMode(.tail)
         Text("· \(appExit(app, language: language))")
@@ -287,7 +303,15 @@ struct SimpleAppDetailView: View {
         label: localText(language, "EXIT", "出口"),
         chunks: [(appExit(app, language: language), exitColor)]
       )
-      if app.verdict == "DIRECT" || app.verdict == "MIXED" {
+      if app.verdict == "BYPASSED" {
+        DetailLine(
+          label: localText(language, "HINT", "提示"),
+          chunks: [(
+            localText(language, "The controller explicitly selected DIRECT — review the matching rule if this should be proxied.", "控制器明确选择了直连 — 如应走代理，请检查命中规则。"),
+            .orange
+          )]
+        )
+      } else if app.verdict == "DIRECT" || app.verdict == "MIXED" {
         DetailLine(
           label: localText(language, "HINT", "提示"),
           chunks: [(
@@ -339,7 +363,7 @@ struct AppDetailView: View {
       DetailLine(
         label: localText(language, "CONTROLLER / RULE", "控制器 / 规则"),
         chunks: [
-          (app.proxyChains.isEmpty ? localText(language, "not available", "不可用") : app.proxyChains.joined(separator: " | "), app.proxyChains.isEmpty ? .secondary : .green),
+          (app.proxyChains.isEmpty ? localText(language, "not available", "不可用") : app.proxyChains.joined(separator: " | "), app.proxyChains.isEmpty ? .secondary : app.verdict == "BYPASSED" ? .orange : .green),
           (app.rules.isEmpty ? "" : "  \(app.rules.joined(separator: " | "))", .orange),
         ]
       )
@@ -378,7 +402,7 @@ struct AppDetailView: View {
   }
 
   private var hiddenDestination: Bool {
-    !app.proxyHops.isEmpty && app.destinations.isEmpty
+    app.verdict != "BYPASSED" && !app.proxyHops.isEmpty && app.destinations.isEmpty
   }
 
   private var destinationSummary: String {

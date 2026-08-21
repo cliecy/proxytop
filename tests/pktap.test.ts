@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test"
 import { parsePktapLine } from "../src/parsers/pktap"
+import { hasPktapReadiness } from "../src/collectors/pktap"
+
+test("recognizes readiness only at the complete listening boundary", () => {
+  expect(hasPktapReadiness("tcpdump: listening on pktap, link-type PKTAP")).toBe(true)
+  expect(hasPktapReadiness("tcpdump: still listening online")).toBe(false)
+  expect(hasPktapReadiness("listen")).toBe(false)
+})
 
 test("parses Apple pktap metadata", () => {
   const packet = parsePktapLine(

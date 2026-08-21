@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import type { FlowSample, NetworkSnapshot } from "../src/domain"
 import { ProxyEngine } from "../src/engine"
 import { GeoResolver } from "../src/geo"
@@ -62,7 +63,7 @@ function snapshot(): NetworkSnapshot {
     ],
     dnsResolvers: [],
     overlayNetworks: [],
-    errors: [],
+    errors: ["collector failed"],
   }
 }
 
@@ -123,6 +124,7 @@ describe("daemon IPC", () => {
     const payload = buildSnapshot(store, engine, "offline country DB ready", 2_500)
 
     expect(payload.kind).toBe("snapshot")
+    expect(payload.errors).toEqual(["collector failed"])
     expect(payload.collectedAt).toBe(2_500)
     expect(payload.wanRate).toEqual({ in: 10_000, out: 5_000 })
     expect(payload.history).toEqual({ inbound: [], outbound: [] })
@@ -155,12 +157,71 @@ describe("daemon IPC", () => {
     expect(payload.engines.length).toBeGreaterThan(0)
   })
 
+  test("matches the shared Swift daemon contract fixture", () => {
+    const store = new FlowStore()
+    store.setSnapshot({
+      collectedAt: 1_000,
+      proxy: { httpEnabled: false, httpsEnabled: false, socksEnabled: false, pacEnabled: false, exceptions: [] },
+      defaultInterface: "en0",
+      physicalInterfaces: ["en0"],
+      tunnelInterfaces: [],
+      vpnInterfaces: [],
+      listeners: [],
+      vpnServices: [],
+      interfaces: [{
+        name: "en0",
+        kind: "physical",
+        status: "active",
+        addresses: ["192.168.1.2"],
+        owner: "Wi-Fi",
+        isDefault: true,
+        carriesDns: true,
+      }],
+      dnsResolvers: [],
+      overlayNetworks: [],
+      errors: ["lsof: test failure", "route: test failure"],
+    })
+    store.setRegionLookup((host) => (host === "8.8.8.8" ? "US" : undefined))
+    store.setControllerSnapshot({
+      kind: "clash",
+      url: "http://127.0.0.1:9090",
+      collectedAt: Date.now(),
+      connections: [{
+        id: "direct",
+        process: "BypassApp",
+        sourceIp: "192.168.1.2",
+        sourcePort: 50_000,
+        destinationIp: "8.8.8.8",
+        destinationPort: 443,
+        host: "example.com",
+        network: "tcp",
+        rule: "MATCH",
+        chains: [],
+        upload: 0,
+        download: 0,
+      }],
+    })
+    store.upsert(flow({
+      pid: 42,
+      process: "BypassApp",
+      local: { raw: "192.168.1.2:50000", host: "192.168.1.2", port: 50_000 },
+    }))
+    const engine = engineWith(store)
+    engine.setStatus("nettop", "active")
+    engine.setStatus("clash", "active")
+    engine.setStatus("snapshot", "degraded (2 errors)")
+    const payload = buildSnapshot(store, engine, "offline country DB ready", 1_730_000_000_000)
+    const expected = JSON.parse(readFileSync(resolve(import.meta.dir, "../app/Tests/ProxytopTests/Fixtures/daemon-snapshot.json"), "utf8"))
+    expect(payload).toEqual(expected)
+  })
+
   test("buildSnapshot handles a missing snapshot with an empty header", () => {
     const store = new FlowStore()
     const payload = buildSnapshot(store, engineWith(store), "not installed", 1)
     expect(payload.apps).toEqual([])
     expect(payload.engines).toEqual([])
     expect(payload.header).toBeNull()
+    expect(payload.errors).toEqual([])
     expect(payload.wanRate).toEqual({ in: 0, out: 0 })
   })
 })

@@ -11,5 +11,11 @@ let package = Package(
       name: "Proxytop",
       path: "Sources/Proxytop"
     ),
+    .testTarget(
+      name: "ProxytopTests",
+      dependencies: ["Proxytop"],
+      path: "Tests/ProxytopTests",
+      resources: [.copy("Fixtures")]
+    ),
   ]
 )

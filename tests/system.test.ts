@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import type { NetworkSnapshot } from "../src/domain"
+import { collectNetworkSnapshot, mergeNetworkSnapshot } from "../src/collectors/system"
 import {
   buildInterfaceInventory,
   enrichVpnService,
@@ -170,5 +172,55 @@ utun7: flags=8051<UP,RUNNING> mtu 1280
       { name: "utun6", owner: "Shadowrocket", primary: true },
       { name: "utun7", owner: "Work VPN", primary: false },
     ])
+  })
+
+  test("pure merge preserves failed sources but clears successful empty results", () => {
+    const previous = {
+      collectedAt: 1, proxy: { httpEnabled: true, httpsEnabled: false, socksEnabled: false, pacEnabled: false, exceptions: [] },
+      defaultInterface: "en0", physicalInterfaces: ["en0"], tunnelInterfaces: ["utun1"], vpnInterfaces: ["utun1"],
+      listeners: [{ process: "old", pid: 1, host: "*", port: 80 }], vpnServices: [], interfaces: [], dnsResolvers: [], overlayNetworks: [], errors: ["old"],
+    } satisfies NetworkSnapshot
+    const current = { ...previous, collectedAt: 2, proxy: { httpEnabled: false, httpsEnabled: false, socksEnabled: false, pacEnabled: false, exceptions: [] }, listeners: [], errors: ["new"] }
+    const merged = mergeNetworkSnapshot(current, previous, { proxy: true })
+    expect(merged.proxy).toBe(previous.proxy)
+    expect(merged.listeners).toEqual([])
+    expect(merged.errors).toEqual(["new"])
+  })
+
+  test("collector accepts a successful empty ZeroTier list and clears stale networks", async () => {
+    const previous = {
+      collectedAt: 1, proxy: { httpEnabled: false, httpsEnabled: false, socksEnabled: false, pacEnabled: false, exceptions: [] },
+      physicalInterfaces: [], tunnelInterfaces: [], vpnInterfaces: [], listeners: [], vpnServices: [], interfaces: [], dnsResolvers: [],
+      overlayNetworks: [{ provider: "ZeroTier", id: "old", name: "Old", interfaceName: "feth1", status: "OK", addresses: [], routes: [] }], errors: [],
+    } satisfies NetworkSnapshot
+    const result = await collectNetworkSnapshot(undefined, previous, {
+      which: () => "/usr/local/bin/zerotier-cli",
+      runCommand: async (command) => command.includes("zerotier-cli")
+        ? { stdout: "[]", stderr: "", exitCode: 0 }
+        : command.endsWith("pgrep")
+          ? { stdout: "", stderr: "", exitCode: 1 }
+          : { stdout: "", stderr: "", exitCode: 0 },
+    })
+    expect(result.overlayNetworks).toEqual([])
+    expect(result.errors).toEqual([])
+  })
+
+  test("collector keeps previous source on failure and treats pgrep exit 1 as empty", async () => {
+    const previous = {
+      collectedAt: 1, proxy: { httpEnabled: true, httpsEnabled: false, socksEnabled: false, pacEnabled: false, exceptions: [] },
+      defaultInterface: "en0", physicalInterfaces: ["en0"], tunnelInterfaces: [], vpnInterfaces: [], listeners: [], vpnServices: [], interfaces: [], dnsResolvers: [], overlayNetworks: [], errors: ["old"],
+    } satisfies NetworkSnapshot
+    const result = await collectNetworkSnapshot(undefined, previous, {
+      which: () => null, now: () => 99,
+      runCommand: async (command, args) => {
+        if (args[0] === "--proxy") return { stdout: "", stderr: "x".repeat(600), exitCode: 2 }
+        if (command.endsWith("pgrep")) return { stdout: "", stderr: "", exitCode: 1 }
+        return { stdout: "", stderr: "", exitCode: 0 }
+      },
+    })
+    expect(result.collectedAt).toBe(99)
+    expect(result.proxy).toBe(previous.proxy)
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]?.length).toBe(512)
   })
 })

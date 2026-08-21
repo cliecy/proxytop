@@ -34,7 +34,7 @@ func verdictColor(_ verdict: String) -> Color {
   switch verdict {
   case "PROXIED": return .green
   case "DIRECT": return .red
-  case "MIXED": return .orange
+  case "MIXED", "BYPASSED": return .orange
   case "ENGINE": return .cyan
   case "OVERLAY": return .purple
   case "LOCAL": return .teal
@@ -51,6 +51,7 @@ func verdictLabel(_ verdict: String, language: String) -> String {
     "PROXIED": ("PROXIED", "代理"),
     "DIRECT": ("DIRECT", "直连"),
     "MIXED": ("MIXED!", "混合"),
+    "BYPASSED": ("BYPASSED", "已绕过"),
     "OVERLAY": ("OVERLAY", "覆盖"),
     "ENGINE": ("ENGINE", "引擎"),
     "LOCAL": ("LOCAL", "本地"),
@@ -98,7 +99,7 @@ func appExit(_ app: SerializedApp, language: String) -> String {
     app.verdict == "PROXIED"
     || app.verdict == "ENGINE"
     || app.paths.contains("TUNNELED")
-    || !app.proxyHops.isEmpty
+    || (app.verdict != "BYPASSED" && !app.proxyHops.isEmpty)
   if proxiedLike {
     if !app.nodeRegions.isEmpty {
       let nodes = app.nodeRegions.joined(separator: ",")

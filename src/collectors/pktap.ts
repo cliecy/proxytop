@@ -22,8 +22,14 @@ export async function authorizePacketCapture(): Promise<string | undefined> {
   return (await authorization.exited) === 0 ? user : undefined
 }
 
+export function hasPktapReadiness(text: string): boolean {
+  return /\blistening on\b/.test(text)
+}
+
 export class PktapCollector {
   private child?: Bun.Subprocess<"inherit", "pipe", "pipe">
+  private startPromise?: Promise<boolean>
+  private stopped = false
 
   constructor(
     private readonly dropUser: string,
@@ -31,7 +37,16 @@ export class PktapCollector {
     private readonly onStatus: (status: string) => void,
   ) {}
 
-  async start(): Promise<boolean> {
+  start(): Promise<boolean> {
+    if (this.stopped) return Promise.resolve(false)
+    if (this.startPromise) return this.startPromise
+    const pending = this.startInternal().finally(() => { if (this.startPromise === pending) this.startPromise = undefined })
+    this.startPromise = pending
+    return pending
+  }
+
+  private async startInternal(): Promise<boolean> {
+    if (this.child) return true
     const tcpdumpArgs = [
       "/usr/sbin/tcpdump",
       "-i",
@@ -56,31 +71,40 @@ export class PktapCollector {
     const ready = new Promise<boolean>((resolve) => {
       resolveReady = resolve
     })
-    void this.drainStderr(this.child, resolveReady)
-    void this.consume()
-    const started = await Promise.race([
-      ready,
-      this.child.exited.then(() => false),
-    ])
-    this.onStatus(started ? "active" : "authorization failed")
-    return started
+    const child = this.child
+    void this.drainStderr(child, resolveReady)
+    void this.consume(child)
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<boolean>((resolve) => { timeout = setTimeout(() => resolve(false), 10_000) })
+    const started = await Promise.race([ready, this.child.exited.then(() => false), deadline])
+    if (timeout) clearTimeout(timeout)
+    if (!started || this.stopped) {
+      this.child?.kill("SIGTERM")
+      this.child = undefined
+      this.onStatus(this.stopped ? "stopped" : "authorization failed")
+      return false
+    }
+    this.onStatus("active")
+    return true
   }
 
   stop(): void {
+    if (this.stopped) return
+    this.stopped = true
     this.child?.kill("SIGTERM")
+    this.child = undefined
   }
 
-  private async consume(): Promise<void> {
-    if (!this.child) return
+  private async consume(child: Bun.Subprocess<"inherit", "pipe", "pipe">): Promise<void> {
     try {
-      for await (const line of splitLines(this.child.stdout)) {
+      for await (const line of splitLines(child.stdout)) {
         const packet = parsePktapLine(line)
-        if (packet) this.onPacket(packet)
+        if (packet && !this.stopped && this.child === child) this.onPacket(packet)
       }
-      const exitCode = await this.child.exited
-      this.onStatus(exitCode === 0 ? "stopped" : `exited ${exitCode}`)
+      const exitCode = await child.exited
+      if (!this.stopped && this.child === child) this.onStatus(exitCode === 0 ? "stopped" : `exited ${exitCode}`)
     } catch (error) {
-      this.onStatus(`error: ${error instanceof Error ? error.message : String(error)}`)
+      if (!this.stopped && this.child === child) this.onStatus(`error: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -97,7 +121,7 @@ export class PktapCollector {
       if (done) break
       if (!ready) process.stderr.write(value)
       text += decoder.decode(value, { stream: true })
-      if (!ready && /\blistening on\b/.test(text)) {
+      if (!ready && hasPktapReadiness(text)) {
         ready = true
         resolveReady(true)
       }

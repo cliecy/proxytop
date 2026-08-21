@@ -123,7 +123,7 @@ export async function inspectApp(
   }
 
   for (const app of matches) {
-    const hidden = app.proxyHops.length > 0 || app.paths.includes("TUNNELED")
+    const hidden = app.verdict !== "BYPASSED" && (app.proxyHops.length > 0 || app.paths.includes("TUNNELED"))
     console.log(`${app.process} [${app.verdict}] confidence=${app.confidence}`)
     console.log(`  PIDs: ${app.pids.join(", ")}`)
     console.log(`  Paths: ${app.paths.map((path) => pathLabel(path)).join(" + ")}`)

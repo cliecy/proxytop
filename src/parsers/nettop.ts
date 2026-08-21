@@ -66,17 +66,26 @@ export class NettopParser {
   private columns = new Map<string, number>()
   private process?: ProcessContext
 
+  constructor(private readonly now: () => number = Date.now) {}
+
   private parseTimestamp(value: string | undefined): number {
+    const current = this.now()
     const match = value?.match(/^(\d{2}):(\d{2}):(\d{2})\.(\d+)$/)
-    if (!match) return Date.now()
-    const now = new Date()
-    now.setHours(
-      Number(match[1]),
-      Number(match[2]),
-      Number(match[3]),
-      Number((match[4] || "0").padEnd(3, "0").slice(0, 3)),
+    if (!match) return current
+    const hours = Number(match[1])
+    const minutes = Number(match[2])
+    const seconds = Number(match[3])
+    if (hours > 23 || minutes > 59 || seconds > 59) return current
+    const milliseconds = Number((match[4] || "0").padEnd(3, "0").slice(0, 3))
+    const candidates = [-1, 0, 1].map((dayOffset) => {
+      const candidate = new Date(current)
+      candidate.setHours(hours, minutes, seconds, milliseconds)
+      candidate.setDate(candidate.getDate() + dayOffset)
+      return candidate.getTime()
+    })
+    return candidates.reduce((closest, candidate) =>
+      Math.abs(candidate - current) < Math.abs(closest - current) ? candidate : closest,
     )
-    return now.getTime()
   }
 
   parse(line: string): FlowSample | undefined {

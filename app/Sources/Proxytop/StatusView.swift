@@ -31,6 +31,7 @@ struct StatusView: View {
       ("nettop", statuses?.nettop ?? "-", stateColor(statuses?.nettop)),
       ("clash", statuses?.clash ?? "-", stateColor(statuses?.clash)),
       ("pktap", statuses?.pktap ?? "-", stateColor(statuses?.pktap)),
+      ("snapshot", statuses?.snapshot ?? "-", stateColor(statuses?.snapshot)),
       ("geo", statuses?.geo ?? "-", stateColor(statuses?.geo)),
     ]
 
@@ -70,12 +71,19 @@ struct StatusView: View {
       localText(model.language, "COVERAGE", "覆盖"),
       localText(
         model.language,
-        "\(coverage.proxied) proxied · \(coverage.direct) direct · \(coverage.mixed) mixed",
-        "\(coverage.proxied) 代理 · \(coverage.direct) 直连 · \(coverage.mixed) 混合"
+        "\(coverage.proxied) proxied · \(coverage.direct) direct · \(coverage.bypassed) bypassed · \(coverage.mixed) mixed",
+        "\(coverage.proxied) 代理 · \(coverage.direct) 直连 · \(coverage.bypassed) 绕过 · \(coverage.mixed) 混合"
       ),
-      coverage.direct > 0 || coverage.mixed > 0 ? .orange : .green
+      coverage.direct > 0 || coverage.mixed > 0 ? .red : coverage.bypassed > 0 ? .orange : .green
     ))
     rows.append((localText(model.language, "APPS", "应用数"), "\(model.snapshot?.apps.count ?? 0)", .secondary))
+    let collectorErrors = model.snapshot?.errors ?? []
+    for (index, error) in collectorErrors.prefix(3).enumerated() {
+      rows.append(("COLLECTOR ERROR \(index + 1)", error, .red))
+    }
+    if collectorErrors.count > 3 {
+      rows.append(("COLLECTOR ERRORS", "+\(collectorErrors.count - 3) more", .orange))
+    }
     if let error = model.lastError {
       rows.append((localText(model.language, "ENGINE ERROR", "引擎错误"), error, .red))
     }
@@ -85,6 +93,7 @@ struct StatusView: View {
   private func stateColor(_ value: String?) -> Color {
     guard let value else { return .secondary }
     let lower = value.lowercased()
+    if lower.contains("degraded") || lower.contains("partial") { return .orange }
     if lower.contains("inactive") || lower.contains("disconnected") || lower.contains("disabled")
       || lower.contains("offline") || lower.contains("error") || lower.contains("失败") || lower.contains("未安装") {
       return .red
